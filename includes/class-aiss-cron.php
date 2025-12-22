@@ -20,7 +20,7 @@ final class Cron {
         add_filter('cron_schedules', [$this, 'add_cron_schedules']);
         add_action(self::HOOK, [$this, 'run']);
 
-        // Reschedule if interval changed
+        // Reschedule if settings change
         add_action('update_option_aiss_settings', function($old, $new) {
             self::ensure_scheduled(true);
         }, 10, 2);
@@ -36,8 +36,28 @@ final class Cron {
         }
 
         if (!wp_next_scheduled(self::HOOK)) {
+            // FIX: Force WP to refresh the list of allowed schedules (intervals)
+            // This ensures the new '5 minute' interval is recognized immediately.
+            delete_transient('cron_schedules'); // Clear cache
+            
+            // Re-register the schedule manually for this request to be safe
+            add_filter('cron_schedules', [__CLASS__, 'static_add_schedule_fallback']);
+
             wp_schedule_event(time() + 60, $schedule_key, self::HOOK);
         }
+    }
+
+    public static function static_add_schedule_fallback($schedules) {
+        $settings = Utils::get_settings();
+        $minutes = max(5, (int)$settings['schedule_minutes']);
+        $key = 'aiss_every_' . $minutes . '_minutes';
+        if (!isset($schedules[$key])) {
+            $schedules[$key] = [
+                'interval' => $minutes * MINUTE_IN_SECONDS,
+                'display'  => sprintf('AI Social Share: Every %d minutes', $minutes),
+            ];
+        }
+        return $schedules;
     }
 
     public static function clear_schedule() : void {
@@ -49,22 +69,13 @@ final class Cron {
     }
 
     public function add_cron_schedules(array $schedules) : array {
-        $settings = Utils::get_settings();
-        $minutes = max(5, (int)$settings['schedule_minutes']);
-        $key = 'aiss_every_' . $minutes . '_minutes';
-        if (!isset($schedules[$key])) {
-            $schedules[$key] = [
-                'interval' => $minutes * MINUTE_IN_SECONDS,
-                'display' => sprintf('AI Social Share: Every %d minutes', $minutes),
-            ];
-        }
-        return $schedules;
+        return self::static_add_schedule_fallback($schedules);
     }
 
     public function run() : void {
         $settings = Utils::get_settings();
 
-        // Safety: if FB not connected or OpenRouter key missing, do nothing.
+        // Safety checks
         if (!$this->facebook->is_connected()) { return; }
         if (trim((string)$settings['openrouter_api_key']) === '') { return; }
 
@@ -87,7 +98,7 @@ final class Cron {
             'ignore_sticky_posts' => true,
         ];
 
-        // Optional filter by category/tag slugs
+        // Apply Filters
         $mode = (string)$settings['filter_mode'];
         $terms_raw = trim((string)$settings['filter_terms']);
         if ($terms_raw !== '' && in_array($mode, ['category','tag'], true)) {
@@ -113,12 +124,13 @@ final class Cron {
     }
 
     public function process_post(int $post_id) : array {
-        // Dedupe double-check
+        // Double-check to prevent duplicates
         $already = (int)get_post_meta($post_id, '_aiss_fb_shared_at', true);
         if ($already > 0) {
             return ['ok' => true, 'skipped' => true];
         }
 
+        // 1. Generate Content
         $gen = $this->openrouter->generate_facebook_post($post_id);
         if (!$gen['ok']) {
             update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$gen['error']));
@@ -128,12 +140,14 @@ final class Cron {
         $message = (string)$gen['text'];
         update_post_meta($post_id, '_aiss_fb_last_generated', wp_kses_post($message));
 
+        // 2. Share to Facebook
         $share = $this->facebook->share_link_post($post_id, $message);
         if (!$share['ok']) {
             update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$share['error']));
             return ['ok' => false, 'error' => (string)$share['error']];
         }
 
+        // 3. Success
         update_post_meta($post_id, '_aiss_fb_shared_at', time());
         if (!empty($share['id'])) {
             update_post_meta($post_id, '_aiss_fb_remote_id', sanitize_text_field((string)$share['id']));
