@@ -163,11 +163,21 @@ CSS;
         // General
         if (isset($in['openrouter_api_key'])) $s['openrouter_api_key'] = trim($in['openrouter_api_key']);
         if (isset($in['openrouter_model'])) $s['openrouter_model'] = trim($in['openrouter_model']);
+        if (isset($in['post_language'])) $s['post_language'] = sanitize_key($in['post_language']);
         $s['enable_web_search'] = isset($in['enable_web_search']);
         $s['enable_debug_logs'] = isset($in['enable_debug_logs']);
 
         // Scheduler
-        if (isset($in['schedule_minutes'])) $s['schedule_minutes'] = max(5, min(1440, (int)$in['schedule_minutes']));
+        if (isset($in['schedule_minutes'])) {
+            $old_minutes = (int)$s['schedule_minutes'];
+            $new_minutes = max(5, min(1440, (int)$in['schedule_minutes']));
+            $s['schedule_minutes'] = $new_minutes;
+            
+            // If schedule changed, force reschedule
+            if ($old_minutes !== $new_minutes) {
+                set_transient('aiss_force_reschedule', true, 60);
+            }
+        }
         if (isset($in['max_posts_per_run'])) $s['max_posts_per_run'] = max(1, min(20, (int)$in['max_posts_per_run']));
         if (isset($in['filter_mode'])) $s['filter_mode'] = sanitize_key($in['filter_mode']);
         if (isset($in['filter_terms'])) $s['filter_terms'] = sanitize_text_field($in['filter_terms']);
@@ -249,10 +259,29 @@ CSS;
         echo '<div class="aiss-card"><h2>OpenRouter AI</h2><p class="description">Configure AI text generation.</p>';
         echo '<table class="aiss-form-table">';
         echo '<tr><th>API Key <span style="color:#dc2626">*</span></th><td><input type="password" class="aiss-input" name="aiss_settings[openrouter_api_key]" value="'.esc_attr($s['openrouter_api_key']).'" required></td></tr>';
-        echo '<tr><th>Model</th><td><select class="aiss-select" name="aiss_settings[openrouter_model]">';
-        $models = ['openai/gpt-4o-mini'=>'GPT-4o Mini (Fast)','openai/gpt-4o'=>'GPT-4o (Better)','anthropic/claude-3.5-sonnet'=>'Claude Sonnet 3.5'];
-        foreach($models as $k=>$v) echo '<option value="'.$k.'" '.selected($s['openrouter_model'],$k,false).'>'.$v.'</option>';
-        echo '</select></td></tr>';
+        echo '<tr><th>Model</th><td><input type="text" class="aiss-input" name="aiss_settings[openrouter_model]" value="'.esc_attr($s['openrouter_model']).'" placeholder="openai/gpt-4o-mini"><br><small style="color:#6b7280">Copy model ID from <a href="https://openrouter.ai/models" target="_blank">OpenRouter Models</a></small></td></tr>';
+        echo '<tr><th>Post Language</th><td><select class="aiss-select" name="aiss_settings[post_language]">';
+        $languages = [
+            'en' => 'English',
+            'el' => 'Greek (Ελληνικά)',
+            'es' => 'Spanish (Español)',
+            'fr' => 'French (Français)',
+            'de' => 'German (Deutsch)',
+            'it' => 'Italian (Italiano)',
+            'pt' => 'Portuguese (Português)',
+            'ru' => 'Russian (Русский)',
+            'ar' => 'Arabic (العربية)',
+            'zh' => 'Chinese (中文)',
+            'ja' => 'Japanese (日本語)',
+            'ko' => 'Korean (한국어)',
+            'tr' => 'Turkish (Türkçe)',
+            'nl' => 'Dutch (Nederlands)',
+            'pl' => 'Polish (Polski)',
+        ];
+        foreach($languages as $code => $name) {
+            echo '<option value="'.$code.'" '.selected($s['post_language']??'en', $code, false).'>'.$name.'</option>';
+        }
+        echo '</select><br><small style="color:#6b7280">AI will write posts in this language</small></td></tr>';
         echo '<tr><th>Web Search</th><td><label><input type="checkbox" name="aiss_settings[enable_web_search]" value="1" '.checked($s['enable_web_search'],true,false).'> Enable AI web search for context</label></td></tr>';
         echo '</table></div>';
         
@@ -369,6 +398,15 @@ CSS;
         $last_run = $health['last_run'];
         $stats = get_option('aiss_last_run_stats', []);
         
+        // Auto-fix: If cron is not scheduled and we just loaded the page, schedule it
+        if (!$nxt || get_transient('aiss_force_reschedule')) {
+            Cron::ensure_scheduled(true);
+            delete_transient('aiss_force_reschedule');
+            // Refresh health status
+            $health = Cron::get_health_status();
+            $nxt = $health['next_run'];
+        }
+        
         // Health Badge
         $health_class = $health['healthy'] ? 'health-good' : 'health-bad';
         $health_text = $health['healthy'] ? 'Healthy' : 'Issues Detected';
@@ -483,6 +521,25 @@ CSS;
         }
         echo '</div>';
         
+        // Prompt Preview
+        echo '<div class="aiss-card"><h2>Active Prompts</h2>';
+        echo '<p class="description">These are the prompts currently being sent to AI (with language setting applied).</p>';
+        
+        $language = $this->get_language_display($s['post_language'] ?? 'en');
+        
+        echo '<div style="margin-bottom:20px">';
+        echo '<h3 style="font-size:14px; margin:0 0 8px 0; color:#374151">Facebook Prompt:</h3>';
+        echo '<div style="background:#f9fafb; padding:12px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap; border:1px solid #e5e7eb">';
+        echo esc_html(str_replace('{language}', $language, $s['prompt_facebook']));
+        echo '</div></div>';
+        
+        echo '<div>';
+        echo '<h3 style="font-size:14px; margin:0 0 8px 0; color:#374151">X/Twitter Prompt:</h3>';
+        echo '<div style="background:#f9fafb; padding:12px; border-radius:6px; font-family:monospace; font-size:12px; white-space:pre-wrap; border:1px solid #e5e7eb">';
+        echo esc_html(str_replace('{language}', $language, $s['prompt_x']));
+        echo '</div></div>';
+        echo '</div>';
+        
         // Quick Actions
         echo '<div class="aiss-card"><h2>Quick Actions</h2>';
         echo '<p class="description">Debug tools for testing and troubleshooting.</p>';
@@ -490,6 +547,27 @@ CSS;
         echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_run_cron'),'aiss_run_cron').'" class="aiss-btn aiss-btn-secondary">Run Cron</a>';
         echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_reset_cron'),'aiss_reset_cron').'" class="aiss-btn aiss-btn-secondary">Reset Cron</a>';
         echo '</div></div>';
+    }
+    
+    private function get_language_display($code) {
+        $languages = [
+            'en' => 'English',
+            'el' => 'Greek',
+            'es' => 'Spanish',
+            'fr' => 'French',
+            'de' => 'German',
+            'it' => 'Italian',
+            'pt' => 'Portuguese',
+            'ru' => 'Russian',
+            'ar' => 'Arabic',
+            'zh' => 'Chinese',
+            'ja' => 'Japanese',
+            'ko' => 'Korean',
+            'tr' => 'Turkish',
+            'nl' => 'Dutch',
+            'pl' => 'Polish',
+        ];
+        return $languages[$code] ?? 'English';
     }
 
     // --- Action Handlers ---

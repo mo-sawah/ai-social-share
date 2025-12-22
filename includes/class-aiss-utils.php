@@ -13,6 +13,7 @@ final class Utils {
             'openrouter_site'    => home_url(),
             'openrouter_app'     => 'AI Social Share',
             'enable_web_search'  => false,
+            'post_language'      => 'en', // Language for generated posts
 
             // --- Scheduler ---
             'schedule_minutes'   => 30,
@@ -31,7 +32,7 @@ final class Utils {
             'fb_page_name'       => '',
             'fb_page_token'      => '', // Encrypted
             'fb_connected_at'    => 0,
-            'prompt_facebook'    => "You are a professional Social Media Manager creating content for Facebook.\n\nTask: Write an engaging Facebook post about the article provided.\n\nGuidelines:\n- Tone: Professional, informative, and engaging\n- Opening: Use VARIED hooks (surprising fact, question, bold statement, or breaking news angle). NEVER repeat the same opening pattern.\n- Structure: 2-3 concise paragraphs that capture the essence of the story\n- Style: Clear, direct, and compelling - write like a journalist, not a marketer\n- Emojis: Use 1-2 relevant emojis maximum, only if they add value\n- Formatting: Use line breaks for readability\n- Call-to-action: End with a simple invitation to engage or read more\n- Hashtags: Add exactly 3 relevant hashtags at the end\n\nCONSTRAINT: Do NOT include the article URL (it will be added automatically).\n\nReturn ONLY the final post text.",
+            'prompt_facebook'    => "You are a professional journalist creating a Facebook post.\n\nIMPORTANT RULES:\n❌ NEVER start with \"Did you know\"\n❌ NEVER start with \"🚨 **Did you know\"\n❌ NEVER use question hooks in the opening\n✅ Start with a direct statement or breaking news angle\n\nWrite a compelling post about the article:\n- Lead with the most newsworthy fact directly\n- Write 2-3 short paragraphs\n- Professional, clear, journalistic tone\n- Maximum 2 emojis (use sparingly)\n- End with 3 relevant hashtags\n- Do NOT include the article URL\n\nEXAMPLES OF GOOD OPENINGS:\n\"Authorities have launched an investigation into...\"\n\"A shocking incident at a local school has prompted...\"\n\"Five students have been identified in connection with...\"\n\"Local officials are responding to reports of...\"\n\nWrite in {language}. Return ONLY the post text.",
 
             // --- X (Twitter) ---
             'x_enabled'          => false,
@@ -40,7 +41,7 @@ final class Utils {
             'x_access_token'     => '',  // User Token (saved after login)
             'x_access_secret'    => '',  // User Secret (saved after login)
             'x_username'         => '',  // Connected Account Name
-            'prompt_x'           => "You are a professional Social Media Manager creating content for X (Twitter).\n\nTask: Write a concise, impactful post about this article.\n\nGuidelines:\n- Length: Under 200 characters (leave room for URL)\n- Style: Direct, newsworthy, and punchy\n- Opening: Vary your approach - use breaking news angle, key fact, or compelling statement\n- Tone: Professional and authoritative\n- Hashtags: Maximum 2 hashtags, only if highly relevant\n- Emojis: 0-1 emoji, use sparingly\n\nCONSTRAINT: Do NOT include the article URL (it will be added automatically).\n\nReturn ONLY the tweet text.",
+            'prompt_x'           => "You are a news editor creating a post for X (Twitter).\n\nWrite a concise, newsworthy post:\n- Under 200 characters (leave room for URL)\n- Lead with the key fact\n- Professional and direct\n- Maximum 2 hashtags\n- Maximum 1 emoji\n- Do NOT include the article URL\n\nWrite in {language}. Return ONLY the tweet text.",
         ];
 
         $saved = get_option('aiss_settings', []);

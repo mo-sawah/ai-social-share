@@ -21,6 +21,12 @@ final class OpenRouter {
             return ['ok' => false, 'error' => 'Post not found.'];
         }
 
+        // Get language name
+        $language = $this->get_language_name($settings['post_language'] ?? 'en');
+        
+        // Replace {language} placeholder in prompt
+        $prompt_template = str_replace('{language}', $language, $prompt_template);
+
         // Prepare post data
         $title = get_the_title($post_id);
         $content = Utils::clean_text($post->post_content, 4000);
@@ -239,6 +245,31 @@ final class OpenRouter {
         $text = trim($text);
         
         return $text;
+    }
+
+    /**
+     * Get language name from code
+     */
+    private function get_language_name(string $code) : string {
+        $languages = [
+            'en' => 'English',
+            'el' => 'Greek',
+            'es' => 'Spanish',
+            'fr' => 'French',
+            'de' => 'German',
+            'it' => 'Italian',
+            'pt' => 'Portuguese',
+            'ru' => 'Russian',
+            'ar' => 'Arabic',
+            'zh' => 'Chinese',
+            'ja' => 'Japanese',
+            'ko' => 'Korean',
+            'tr' => 'Turkish',
+            'nl' => 'Dutch',
+            'pl' => 'Polish',
+        ];
+        
+        return $languages[$code] ?? 'English';
     }
 
     /**
