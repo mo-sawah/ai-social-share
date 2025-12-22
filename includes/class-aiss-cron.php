@@ -4,156 +4,92 @@ namespace AISS;
 if (!defined('ABSPATH')) { exit; }
 
 final class Cron {
-
     const HOOK = 'aiss_cron_tick';
+    private $openrouter, $facebook, $x;
 
-    /** @var OpenRouter */
-    private $openrouter;
-
-    /** @var Facebook */
-    private $facebook;
-
-    public function __construct(OpenRouter $openrouter, Facebook $facebook) {
+    public function __construct(OpenRouter $openrouter, Facebook $facebook, X $x) {
         $this->openrouter = $openrouter;
         $this->facebook = $facebook;
-
+        $this->x = $x;
         add_filter('cron_schedules', [$this, 'add_cron_schedules']);
         add_action(self::HOOK, [$this, 'run']);
-
-        // Reschedule if settings change
-        add_action('update_option_aiss_settings', function($old, $new) {
-            self::ensure_scheduled(true);
-        }, 10, 2);
+        add_action('update_option_aiss_settings', function() { self::ensure_scheduled(true); });
     }
 
-    public static function ensure_scheduled(bool $force_reschedule = false) : void {
-        $settings = Utils::get_settings();
-        $minutes = max(5, (int)$settings['schedule_minutes']);
-        $schedule_key = 'aiss_every_' . $minutes . '_minutes';
-
-        if ($force_reschedule) {
-            self::clear_schedule();
-        }
-
+    public static function ensure_scheduled($force = false) : void {
+        $min = max(5, (int)Utils::get_settings()['schedule_minutes']);
+        if ($force) self::clear_schedule();
         if (!wp_next_scheduled(self::HOOK)) {
-            // FIX: Force WP to refresh the list of allowed schedules (intervals)
-            // This ensures the new '5 minute' interval is recognized immediately.
-            delete_transient('cron_schedules'); // Clear cache
-            
-            // Re-register the schedule manually for this request to be safe
-            add_filter('cron_schedules', [__CLASS__, 'static_add_schedule_fallback']);
-
-            wp_schedule_event(time() + 60, $schedule_key, self::HOOK);
+            delete_transient('cron_schedules'); 
+            wp_schedule_event(time() + 60, 'aiss_every_'.$min.'_minutes', self::HOOK);
         }
     }
+    
+    public static function clear_schedule() : void { wp_clear_scheduled_hook(self::HOOK); }
 
-    public static function static_add_schedule_fallback($schedules) {
-        $settings = Utils::get_settings();
-        $minutes = max(5, (int)$settings['schedule_minutes']);
-        $key = 'aiss_every_' . $minutes . '_minutes';
-        if (!isset($schedules[$key])) {
-            $schedules[$key] = [
-                'interval' => $minutes * MINUTE_IN_SECONDS,
-                'display'  => sprintf('AI Social Share: Every %d minutes', $minutes),
-            ];
-        }
-        return $schedules;
-    }
-
-    public static function clear_schedule() : void {
-        $ts = wp_next_scheduled(self::HOOK);
-        while ($ts) {
-            wp_unschedule_event($ts, self::HOOK);
-            $ts = wp_next_scheduled(self::HOOK);
-        }
-    }
-
-    public function add_cron_schedules(array $schedules) : array {
-        return self::static_add_schedule_fallback($schedules);
+    public function add_cron_schedules($s) {
+        $min = max(5, (int)Utils::get_settings()['schedule_minutes']);
+        $s['aiss_every_'.$min.'_minutes'] = ['interval' => $min * 60, 'display' => "Every $min Min"];
+        return $s;
     }
 
     public function run() : void {
-        $settings = Utils::get_settings();
+        $s = Utils::get_settings();
+        $fb_on = $this->facebook->is_connected();
+        $x_on  = $this->x->is_connected();
 
-        // Safety checks
-        if (!$this->facebook->is_connected()) { return; }
-        if (trim((string)$settings['openrouter_api_key']) === '') { return; }
+        if (!$fb_on && !$x_on) return;
 
-        $max = max(1, (int)$settings['max_posts_per_run']);
-
+        // Query posts that MIGHT need sharing (published recently)
+        // We do not filter by meta NOT EXISTS here because we have 2 separate flags now.
         $args = [
             'post_type' => 'post',
             'post_status' => 'publish',
-            'posts_per_page' => $max,
-            'orderby' => 'date',
-            'order' => 'DESC',
-            'meta_query' => [
-                [
-                    'key' => '_aiss_fb_shared_at',
-                    'compare' => 'NOT EXISTS',
-                ],
-            ],
+            'posts_per_page' => (int)$s['max_posts_per_run'],
+            'date_query' => [['after' => '2 days ago']], // Only look at recent posts
             'fields' => 'ids',
-            'no_found_rows' => true,
-            'ignore_sticky_posts' => true,
         ];
 
-        // Apply Filters
-        $mode = (string)$settings['filter_mode'];
-        $terms_raw = trim((string)$settings['filter_terms']);
-        if ($terms_raw !== '' && in_array($mode, ['category','tag'], true)) {
-            $slugs = array_values(array_filter(array_map('trim', explode(',', $terms_raw))));
-            if (!empty($slugs)) {
-                $tax = $mode === 'category' ? 'category' : 'post_tag';
-                $args['tax_query'] = [
-                    [
-                        'taxonomy' => $tax,
-                        'field' => 'slug',
-                        'terms' => $slugs,
-                    ]
-                ];
-            }
+        // Apply category filters if set
+        if ($s['filter_mode'] !== 'all' && !empty($s['filter_terms'])) {
+            $args['tax_query'] = [[
+                'taxonomy' => $s['filter_mode'] === 'category' ? 'category' : 'post_tag',
+                'field' => 'slug',
+                'terms' => explode(',', $s['filter_terms'])
+            ]];
         }
 
-        $q = new \WP_Query($args);
-        if (empty($q->posts)) { return; }
-
-        foreach ($q->posts as $post_id) {
-            $this->process_post((int)$post_id);
+        $posts = get_posts($args);
+        foreach ($posts as $pid) {
+            $this->process_post($pid, $s);
         }
     }
 
-    public function process_post(int $post_id) : array {
-        // Double-check to prevent duplicates
-        $already = (int)get_post_meta($post_id, '_aiss_fb_shared_at', true);
-        if ($already > 0) {
-            return ['ok' => true, 'skipped' => true];
+    private function process_post($pid, $s) {
+        // --- FACEBOOK ---
+        $fb_done = get_post_meta($pid, '_aiss_fb_shared_at', true);
+        if (!$fb_done && $this->facebook->is_connected()) {
+            $gen = $this->openrouter->generate_post($pid, $s['prompt_facebook']);
+            if ($gen['ok']) {
+                $res = $this->facebook->share_link_post($pid, $gen['text']);
+                if ($res['ok']) {
+                    update_post_meta($pid, '_aiss_fb_shared_at', time());
+                    update_post_meta($pid, '_aiss_fb_remote_id', $res['id']);
+                }
+            }
         }
 
-        // 1. Generate Content
-        $gen = $this->openrouter->generate_facebook_post($post_id);
-        if (!$gen['ok']) {
-            update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$gen['error']));
-            return ['ok' => false, 'error' => (string)$gen['error']];
+        // --- X (TWITTER) ---
+        $x_done = get_post_meta($pid, '_aiss_x_shared_at', true);
+        if (!$x_done && $this->x->is_connected()) {
+            $gen = $this->openrouter->generate_post($pid, $s['prompt_x']);
+            if ($gen['ok']) {
+                $res = $this->x->post_tweet($pid, $gen['text']);
+                if ($res['ok']) {
+                    update_post_meta($pid, '_aiss_x_shared_at', time());
+                    update_post_meta($pid, '_aiss_x_remote_id', $res['id']);
+                }
+            }
         }
-
-        $message = (string)$gen['text'];
-        update_post_meta($post_id, '_aiss_fb_last_generated', wp_kses_post($message));
-
-        // 2. Share to Facebook
-        $share = $this->facebook->share_link_post($post_id, $message);
-        if (!$share['ok']) {
-            update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$share['error']));
-            return ['ok' => false, 'error' => (string)$share['error']];
-        }
-
-        // 3. Success
-        update_post_meta($post_id, '_aiss_fb_shared_at', time());
-        if (!empty($share['id'])) {
-            update_post_meta($post_id, '_aiss_fb_remote_id', sanitize_text_field((string)$share['id']));
-        }
-        delete_post_meta($post_id, '_aiss_fb_last_error');
-
-        return ['ok' => true, 'id' => $share['id'] ?? ''];
     }
 }
