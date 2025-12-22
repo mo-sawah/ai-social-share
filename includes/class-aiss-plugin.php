@@ -35,14 +35,14 @@ final class Plugin {
     private function __construct() {}
 
     private function init() : void {
-        // Load dependencies
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-utils.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-openrouter.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-facebook.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-x.php'; // NEW
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-cron.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-metabox.php';
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-admin.php';
+        // FIX: Use __DIR__ to correctly load files from the same 'includes' folder
+        require_once __DIR__ . '/class-aiss-utils.php';
+        require_once __DIR__ . '/class-aiss-openrouter.php';
+        require_once __DIR__ . '/class-aiss-facebook.php';
+        require_once __DIR__ . '/class-aiss-x.php'; // Ensure you created this file!
+        require_once __DIR__ . '/class-aiss-cron.php';
+        require_once __DIR__ . '/class-aiss-metabox.php';
+        require_once __DIR__ . '/class-aiss-admin.php';
 
         // Initialize classes
         $this->openrouter = new OpenRouter();
@@ -59,12 +59,13 @@ final class Plugin {
     }
 
     public static function activate() : void {
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-cron.php';
+        // FIX: Load Cron class safely during activation
+        require_once __DIR__ . '/class-aiss-cron.php';
         Cron::ensure_scheduled();
     }
 
     public static function deactivate() : void {
-        require_once plugin_dir_path(__FILE__) . 'includes/class-aiss-cron.php';
+        require_once __DIR__ . '/class-aiss-cron.php';
         Cron::clear_schedule();
     }
 }
