@@ -18,86 +18,56 @@ final class Metabox {
     }
 
     public function register() {
-        add_meta_box(
-            'aiss_metabox',
-            'AI Social Share',
-            [$this, 'render'],
-            ['post'],
-            'side',
-            'high'
-        );
+        add_meta_box('aiss_metabox', 'AI Social Share', [$this, 'render'], ['post'], 'side', 'high');
     }
 
     public function render(\WP_Post $post) {
         $platform = isset($_GET['aiss_platform']) ? sanitize_key($_GET['aiss_platform']) : 'facebook';
         $settings = Utils::get_settings();
 
-        // Simple Tab Navigation inside the box
+        // Simple Tab Navigation
         echo '<div style="border-bottom:1px solid #ddd; margin-bottom:12px; padding-bottom:8px; display:flex; gap:12px;">';
-        
         $style_fb = ($platform === 'facebook') ? 'font-weight:bold; color:#000; text-decoration:none;' : 'color:#0073aa; text-decoration:none;';
         $style_x  = ($platform === 'x') ? 'font-weight:bold; color:#000; text-decoration:none;' : 'color:#0073aa; text-decoration:none;';
-        
-        $link_fb = get_edit_post_link($post->ID) . '&aiss_platform=facebook#aiss_metabox';
-        $link_x  = get_edit_post_link($post->ID) . '&aiss_platform=x#aiss_metabox';
-
-        echo '<a href="' . $link_fb . '" style="' . $style_fb . '">Facebook</a>';
-        echo '<a href="' . $link_x . '" style="' . $style_x . '">X (Twitter)</a>';
+        echo '<a href="' . get_edit_post_link($post->ID) . '&aiss_platform=facebook#aiss_metabox" style="' . $style_fb . '">Facebook</a>';
+        echo '<a href="' . get_edit_post_link($post->ID) . '&aiss_platform=x#aiss_metabox" style="' . $style_x . '">X (Twitter)</a>';
         echo '</div>';
 
-        // Render appropriate platform content
-        if ($platform === 'facebook') {
-            $this->render_platform_status(
-                $post->ID, 
-                'facebook', 
-                $this->facebook->is_connected(), 
-                $settings['prompt_facebook'], 
-                '_aiss_fb_'
-            );
-        } else {
-            $this->render_platform_status(
-                $post->ID, 
-                'x', 
-                $this->x->is_connected(), 
-                $settings['prompt_x'], 
-                '_aiss_x_'
-            );
-        }
-    }
-
-    private function render_platform_status($pid, $platform, $connected, $prompt, $prefix) {
+        // Render Platform Logic
+        $connected = ($platform === 'facebook') ? $this->facebook->is_connected() : $this->x->is_connected();
+        $prefix    = ($platform === 'facebook') ? '_aiss_fb_' : '_aiss_x_';
+        
         if (!$connected) {
-            echo '<p style="color:#d63638;"><strong>Not Connected.</strong> Please configure this network in the settings.</p>';
+            echo '<p style="color:#d63638;"><strong>Not Connected.</strong> Please configure this network in Settings.</p>';
             return;
         }
 
-        $shared_at = get_post_meta($pid, $prefix . 'shared_at', true);
-        $last_err  = get_post_meta($pid, $prefix . 'last_error', true);
-        $last_gen  = get_post_meta($pid, $prefix . 'last_generated', true);
+        $shared_at = get_post_meta($post->ID, $prefix . 'shared_at', true);
+        $last_err  = get_post_meta($post->ID, $prefix . 'last_error', true);
+        $last_gen  = get_post_meta($post->ID, $prefix . 'last_generated', true);
 
-        // Status
+        // Status Display
         if ($shared_at) {
-            echo '<p style="color:#00a32a;"><strong>✓ Shared:</strong> ' . date_i18n('M j, Y g:i a', $shared_at) . '</p>';
+            echo '<p style="color:#00a32a; margin-top:0;"><strong>✓ Shared:</strong> ' . date_i18n('M j, Y g:i a', $shared_at) . '</p>';
         } else {
-            echo '<p><strong>Status:</strong> Not shared yet.</p>';
+            echo '<p style="margin-top:0;"><strong>Status:</strong> Not shared yet.</p>';
         }
 
-        // Error
         if ($last_err) {
             echo '<div style="background:#ffebeb; border-left:4px solid #d63638; padding:8px; margin:8px 0; font-size:12px;">';
-            echo '<strong>Last Error:</strong> ' . esc_html($last_err);
+            echo '<strong>Error:</strong> ' . esc_html($last_err);
             echo '</div>';
         }
 
-        // Manual Form
+        // Form
         echo '<form action="' . admin_url('admin-post.php') . '" method="post">';
         echo '<input type="hidden" name="action" value="aiss_manual_share">';
-        echo '<input type="hidden" name="post_id" value="' . $pid . '">';
+        echo '<input type="hidden" name="post_id" value="' . $post->ID . '">';
         echo '<input type="hidden" name="platform" value="' . esc_attr($platform) . '">';
         wp_nonce_field('aiss_share_nonce', 'aiss_nonce');
 
         echo '<label style="display:block; margin-bottom:4px; font-weight:600;">Message (Editable):</label>';
-        echo '<textarea name="message" style="width:100%; height:120px; margin-bottom:8px;" placeholder="Message will appear here...">' . esc_textarea($last_gen) . '</textarea>';
+        echo '<textarea name="message" style="width:100%; height:120px; margin-bottom:8px; font-family:monospace;" placeholder="Message will appear here...">' . esc_textarea($last_gen) . '</textarea>';
 
         echo '<div style="display:flex; gap:8px;">';
         echo '<button name="do_action" value="generate" class="button button-secondary">Regenerate AI</button>';
@@ -132,14 +102,15 @@ final class Metabox {
         
         // --- Action: Share ---
         elseif ($action === 'share') {
-            // If message is empty, auto-generate first
+            // Auto-generate if empty
             if (empty(trim($message))) {
                 $gen = $this->openrouter->generate_post($pid, $prompt);
                 if ($gen['ok']) {
                     $message = $gen['text'];
                 } else {
                     update_post_meta($pid, $prefix . 'last_error', $gen['error']);
-                    $this->redirect_back($pid, $platform);
+                    wp_safe_redirect(get_edit_post_link($pid) . '&aiss_platform=' . $platform . '#aiss_metabox');
+                    exit;
                 }
             }
 
@@ -160,12 +131,7 @@ final class Metabox {
             }
         }
 
-        $this->redirect_back($pid, $platform);
-    }
-
-    private function redirect_back($pid, $platform) {
-        $url = get_edit_post_link($pid) . '&aiss_platform=' . $platform . '#aiss_metabox';
-        wp_safe_redirect($url);
+        wp_safe_redirect(get_edit_post_link($pid) . '&aiss_platform=' . $platform . '#aiss_metabox');
         exit;
     }
 }

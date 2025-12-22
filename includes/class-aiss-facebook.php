@@ -17,7 +17,7 @@ final class Facebook {
 
     public function oauth_redirect_uri() : string {
         // Facebook must have this exact URL in the app settings (Valid OAuth Redirect URIs)
-        return Utils::admin_url_settings(['tab' => 'facebook', 'aiss_fb_cb' => 1]);
+        return admin_url('options-general.php?page=ai-social-share&tab=facebook&aiss_fb_cb=1');
     }
 
     public function build_oauth_url() : string {
@@ -26,6 +26,7 @@ final class Facebook {
         $redirect = $this->oauth_redirect_uri();
 
         $state = wp_generate_password(24, false, false);
+        // Store state for 15 minutes to prevent CSRF
         set_transient('aiss_fb_state_' . get_current_user_id(), $state, 15 * MINUTE_IN_SECONDS);
 
         $scope = implode(',', [
@@ -36,7 +37,6 @@ final class Facebook {
         ]);
 
         // Build OAuth URL with proper encoding
-        // Use http_build_query to ensure redirect_uri is properly URL-encoded
         $base_url = 'https://www.facebook.com/' . $this->get_api_version() . '/dialog/oauth';
         
         $params = [
@@ -75,15 +75,15 @@ final class Facebook {
             return ['ok' => false, 'error' => 'Facebook App ID/Secret are not set.'];
         }
 
-        // Exchange code for short-lived user token (manual flow)
+        // 1. Exchange code for short-lived user token
         $token = $this->exchange_code_for_token($code, $app_id, $app_secret, $redirect);
         if (!$token['ok']) { return $token; }
 
-        // Exchange for long-lived user token (recommended)
+        // 2. Exchange for long-lived user token (recommended for stability)
         $ll = $this->exchange_for_long_lived_user_token($token['access_token'], $app_id, $app_secret);
         $user_token = $ll['ok'] ? $ll['access_token'] : $token['access_token'];
 
-        // Fetch pages the user manages
+        // 3. Fetch pages the user manages
         $pages = $this->get_pages($user_token);
         if (!$pages['ok']) { return $pages; }
 
@@ -103,6 +103,7 @@ final class Facebook {
             return ['ok' => false, 'error' => 'Missing user token. Please connect again.'];
         }
 
+        // Re-fetch pages to ensure we have the fresh page access token
         $pages = $this->get_pages($user_token);
         if (!$pages['ok']) { return $pages; }
 
@@ -113,11 +114,12 @@ final class Facebook {
                 break;
             }
         }
+
         if (!$picked) {
             return ['ok' => false, 'error' => 'Selected page not found in your managed pages list.'];
         }
         if (empty($picked['access_token'])) {
-            return ['ok' => false, 'error' => 'Facebook did not return a Page access token. Ensure permissions are granted and try again.'];
+            return ['ok' => false, 'error' => 'Facebook did not return a Page access token. Ensure permissions are granted.'];
         }
 
         $settings = Utils::get_settings();
@@ -126,7 +128,7 @@ final class Facebook {
         $settings['fb_page_token']   = Utils::encrypt((string)$picked['access_token']);
         $settings['fb_connected_at'] = time();
 
-        update_option('aiss_settings', $settings, false);
+        Utils::update_settings($settings);
 
         return ['ok' => true];
     }
@@ -171,10 +173,11 @@ final class Facebook {
         return ['ok' => true, 'id' => $remote_id, 'raw' => $json];
     }
 
+    // --- Helper Functions (Restored) ---
+
     private function exchange_code_for_token(string $code, string $app_id, string $app_secret, string $redirect_uri) : array {
         $endpoint = 'https://graph.facebook.com/' . $this->get_api_version() . '/oauth/access_token';
         
-        // Use http_build_query to properly encode redirect_uri
         $params = [
             'client_id' => $app_id,
             'redirect_uri' => $redirect_uri,
@@ -205,6 +208,8 @@ final class Facebook {
     }
 
     private function exchange_for_long_lived_user_token(string $short_user_token, string $app_id, string $app_secret) : array {
+        
+        // This step is crucial: it swaps a 1-hour token for a 60-day token
         $endpoint = 'https://graph.facebook.com/' . $this->get_api_version() . '/oauth/access_token';
         $url = add_query_arg([
             'grant_type' => 'fb_exchange_token',
