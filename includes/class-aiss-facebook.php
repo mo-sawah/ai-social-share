@@ -35,7 +35,11 @@ final class Facebook {
             'pages_manage_posts',
         ]);
 
-        $args = [
+        // Build OAuth URL with proper encoding
+        // Use http_build_query to ensure redirect_uri is properly URL-encoded
+        $base_url = 'https://www.facebook.com/' . $this->get_api_version() . '/dialog/oauth';
+        
+        $params = [
             'client_id' => $app_id,
             'redirect_uri' => $redirect,
             'state' => $state,
@@ -43,8 +47,7 @@ final class Facebook {
             'response_type' => 'code',
         ];
 
-        // Use a stable dialog endpoint (versioned)
-        return add_query_arg($args, 'https://www.facebook.com/' . $this->get_api_version() . '/dialog/oauth');
+        return $base_url . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
     }
 
     public function get_api_version() : string {
@@ -170,12 +173,15 @@ final class Facebook {
 
     private function exchange_code_for_token(string $code, string $app_id, string $app_secret, string $redirect_uri) : array {
         $endpoint = 'https://graph.facebook.com/' . $this->get_api_version() . '/oauth/access_token';
-        $url = add_query_arg([
+        
+        // Use http_build_query to properly encode redirect_uri
+        $params = [
             'client_id' => $app_id,
             'redirect_uri' => $redirect_uri,
             'client_secret' => $app_secret,
             'code' => $code,
-        ], $endpoint);
+        ];
+        $url = $endpoint . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
 
         $resp = wp_remote_get($url, ['timeout' => 30]);
         if (is_wp_error($resp)) {
