@@ -4,136 +4,90 @@ namespace AISS;
 if (!defined('ABSPATH')) { exit; }
 
 final class Metabox {
+    private $openrouter, $facebook, $x;
 
-    /** @var OpenRouter */
-    private $openrouter;
-
-    /** @var Facebook */
-    private $facebook;
-
-    public function __construct(OpenRouter $openrouter, Facebook $facebook) {
-        $this->openrouter = $openrouter;
-        $this->facebook = $facebook;
-
-        add_action('add_meta_boxes', [$this, 'register_metabox']);
-        add_action('admin_post_aiss_fb_share_now', [$this, 'handle_share_now']);
-        add_action('admin_post_aiss_fb_generate', [$this, 'handle_generate_only']);
+    public function __construct(OpenRouter $openrouter, Facebook $facebook, X $x) {
+        $this->openrouter = $openrouter; $this->facebook = $facebook; $this->x = $x;
+        add_action('add_meta_boxes', [$this, 'register']);
+        add_action('admin_post_aiss_manual_share', [$this, 'handle_share']);
     }
 
-    public function register_metabox() : void {
-        add_meta_box(
-            'aiss_metabox',
-            __('AI Social Share', 'ai-social-share'),
-            [$this, 'render_metabox'],
-            ['post'],
-            'side',
-            'high'
-        );
+    public function register() {
+        add_meta_box('aiss_metabox', 'AI Social Share', [$this, 'render'], ['post'], 'side', 'high');
     }
 
-    public function render_metabox(\WP_Post $post) : void {
-        $shared_at = (int)get_post_meta($post->ID, '_aiss_fb_shared_at', true);
-        $remote_id = (string)get_post_meta($post->ID, '_aiss_fb_remote_id', true);
-        $last_err  = (string)get_post_meta($post->ID, '_aiss_fb_last_error', true);
-        $last_gen  = (string)get_post_meta($post->ID, '_aiss_fb_last_generated', true);
+    public function render(\WP_Post $post) {
+        $platform = $_GET['aiss_platform'] ?? 'facebook'; // Simple tab toggle via link
+        $s = Utils::get_settings();
 
-        wp_nonce_field('aiss_metabox_action', 'aiss_metabox_nonce');
+        echo '<div style="border-bottom:1px solid #ddd;margin-bottom:10px;padding-bottom:5px;">';
+        echo '<a href="'.get_edit_post_link($post->ID).'&aiss_platform=facebook#aiss_metabox" style="text-decoration:none;margin-right:10px;font-weight:'.($platform=='facebook'?'bold':'normal').'">Facebook</a>';
+        echo '<a href="'.get_edit_post_link($post->ID).'&aiss_platform=x#aiss_metabox" style="text-decoration:none;font-weight:'.($platform=='x'?'bold':'normal').'">X (Twitter)</a>';
+        echo '</div>';
 
-        echo '<p><strong>Facebook</strong></p>';
-
-        if (!$this->facebook->is_connected()) {
-            echo '<p style="color:#b91c1c;">Not connected.</p>';
-            echo '<p><a class="button button-secondary" href="' . esc_url(Utils::admin_url_settings(['tab'=>'facebook'])) . '">Connect in settings</a></p>';
-            return;
-        }
-
-        if ($shared_at) {
-            echo '<p style="color:#166534;">Shared: ' . esc_html(date_i18n(get_option('date_format') . ' ' . get_option('time_format'), $shared_at)) . '</p>';
-            if ($remote_id) {
-                echo '<p>Remote ID:<br><code style="font-size:11px;">' . esc_html($remote_id) . '</code></p>';
-            }
+        if ($platform === 'facebook') {
+            $this->render_platform($post->ID, 'facebook', $this->facebook->is_connected(), $s['prompt_facebook'], '_aiss_fb_');
         } else {
-            echo '<p>Status: <span style="color:#92400e;">Not shared yet</span></p>';
+            $this->render_platform($post->ID, 'x', $this->x->is_connected(), $s['prompt_x'], '_aiss_x_');
         }
-
-        if ($last_err) {
-            echo '<p style="color:#b91c1c;"><strong>Last error:</strong><br>' . esc_html($last_err) . '</p>';
-        }
-
-        echo '<p><label for="aiss_fb_message"><strong>Message (editable)</strong></label></p>';
-        echo '<textarea id="aiss_fb_message" name="aiss_fb_message" style="width:100%;min-height:120px;">' . esc_textarea($last_gen) . '</textarea>';
-
-        $gen_url = wp_nonce_url(admin_url('admin-post.php?action=aiss_fb_generate&post_id=' . (int)$post->ID), 'aiss_metabox_action', 'aiss_metabox_nonce');
-        $share_url = wp_nonce_url(admin_url('admin-post.php?action=aiss_fb_share_now&post_id=' . (int)$post->ID), 'aiss_metabox_action', 'aiss_metabox_nonce');
-
-        echo '<p style="display:flex; gap:8px; flex-wrap:wrap;">';
-        echo '<a class="button button-secondary" href="' . esc_url($gen_url) . '">Generate</a>';
-        echo '<a class="button button-primary" href="' . esc_url($share_url) . '">Share Now</a>';
-        echo '</p>';
-
-        echo '<p style="font-size:12px;opacity:.85;">Tip: Generate first to preview, then edit the text and Share Now.</p>';
     }
 
-    public function handle_generate_only() : void {
-        if (!current_user_can('edit_posts')) { wp_die('Forbidden'); }
-        $post_id = isset($_GET['post_id']) ? (int)$_GET['post_id'] : 0;
-        if (!$post_id) { wp_die('Missing post_id'); }
-        check_admin_referer('aiss_metabox_action', 'aiss_metabox_nonce');
+    private function render_platform($pid, $platform, $connected, $prompt, $prefix) {
+        if (!$connected) { echo "<p style='color:red'>Not connected.</p>"; return; }
+        
+        $shared_at = get_post_meta($pid, $prefix.'shared_at', true);
+        $last_err  = get_post_meta($pid, $prefix.'last_error', true);
+        $last_gen  = get_post_meta($pid, $prefix.'last_generated', true);
 
-        $gen = $this->openrouter->generate_facebook_post($post_id);
-        if ($gen['ok']) {
-            update_post_meta($post_id, '_aiss_fb_last_generated', wp_kses_post((string)$gen['text']));
-            delete_post_meta($post_id, '_aiss_fb_last_error');
-            wp_safe_redirect(get_edit_post_link($post_id, 'url') . '#aiss_metabox');
-            exit;
-        }
+        if ($shared_at) echo "<p style='color:green'>Shared: ".date_i18n('M j, H:i', $shared_at)."</p>";
+        else echo "<p>Status: Not shared yet</p>";
 
-        update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$gen['error']));
-        wp_safe_redirect(get_edit_post_link($post_id, 'url') . '#aiss_metabox');
-        exit;
+        if ($last_err) echo "<p style='color:red;font-size:11px'>Error: ".esc_html($last_err)."</p>";
+
+        echo '<form action="'.admin_url('admin-post.php').'" method="post">';
+        echo '<input type="hidden" name="action" value="aiss_manual_share">';
+        echo '<input type="hidden" name="post_id" value="'.$pid.'">';
+        echo '<input type="hidden" name="platform" value="'.$platform.'">';
+        wp_nonce_field('aiss_share', 'nonce');
+        
+        echo '<textarea name="message" style="width:100%;height:100px;margin-bottom:5px;" placeholder="Message...">'.esc_textarea($last_gen).'</textarea>';
+        
+        echo '<button name="do_action" value="generate" class="button">Generate AI</button> ';
+        echo '<button name="do_action" value="share" class="button button-primary">Share Now</button>';
+        echo '</form>';
     }
 
-    public function handle_share_now() : void {
-        if (!current_user_can('edit_posts')) { wp_die('Forbidden'); }
-        $post_id = isset($_GET['post_id']) ? (int)$_GET['post_id'] : 0;
-        if (!$post_id) { wp_die('Missing post_id'); }
-        check_admin_referer('aiss_metabox_action', 'aiss_metabox_nonce');
+    public function handle_share() {
+        check_admin_referer('aiss_share', 'nonce');
+        $pid = (int)$_POST['post_id'];
+        $plat = $_POST['platform'];
+        $act = $_POST['do_action'];
+        $msg = wp_unslash($_POST['message']);
+        $prefix = ($plat === 'facebook') ? '_aiss_fb_' : '_aiss_x_';
+        $prompt = ($plat === 'facebook') ? Utils::get_settings()['prompt_facebook'] : Utils::get_settings()['prompt_x'];
 
-        // If admin edited message in the box, capture it from POST when available (classic editor)
-        $msg = '';
-        if (isset($_POST['aiss_fb_message'])) {
-            $msg = wp_unslash((string)$_POST['aiss_fb_message']);
-        } else {
-            // If no POST (Gutenberg sidebar doesn't submit), use last generated or generate now
-            $msg = (string)get_post_meta($post_id, '_aiss_fb_last_generated', true);
-        }
-
-        $msg = trim($msg);
-        if ($msg === '') {
-            $gen = $this->openrouter->generate_facebook_post($post_id);
-            if (!$gen['ok']) {
-                update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$gen['error']));
-                wp_safe_redirect(get_edit_post_link($post_id, 'url') . '#aiss_metabox');
-                exit;
+        if ($act === 'generate') {
+            $gen = $this->openrouter->generate_post($pid, $prompt);
+            update_post_meta($pid, $prefix . ($gen['ok']?'last_generated':'last_error'), $gen['ok']?$gen['text']:$gen['error']);
+        } elseif ($act === 'share') {
+            if (!$msg) {
+                // Generate if empty
+                $gen = $this->openrouter->generate_post($pid, $prompt);
+                if (!$gen['ok']) { update_post_meta($pid, $prefix.'last_error', $gen['error']); wp_safe_redirect(get_edit_post_link($pid).'&aiss_platform='.$plat.'#aiss_metabox'); exit; }
+                $msg = $gen['text'];
             }
-            $msg = (string)$gen['text'];
-            update_post_meta($post_id, '_aiss_fb_last_generated', wp_kses_post($msg));
+            
+            $res = ($plat === 'facebook') ? $this->facebook->share_link_post($pid, $msg) : $this->x->post_tweet($pid, $msg);
+            
+            if ($res['ok']) {
+                update_post_meta($pid, $prefix.'shared_at', time());
+                update_post_meta($pid, $prefix.'remote_id', $res['id']);
+                update_post_meta($pid, $prefix.'last_generated', $msg); // Save what was sent
+                delete_post_meta($pid, $prefix.'last_error');
+            } else {
+                update_post_meta($pid, $prefix.'last_error', $res['error']);
+            }
         }
-
-        $share = $this->facebook->share_link_post($post_id, $msg);
-        if (!$share['ok']) {
-            update_post_meta($post_id, '_aiss_fb_last_error', sanitize_text_field((string)$share['error']));
-            wp_safe_redirect(get_edit_post_link($post_id, 'url') . '#aiss_metabox');
-            exit;
-        }
-
-        update_post_meta($post_id, '_aiss_fb_shared_at', time());
-        if (!empty($share['id'])) {
-            update_post_meta($post_id, '_aiss_fb_remote_id', sanitize_text_field((string)$share['id']));
-        }
-        delete_post_meta($post_id, '_aiss_fb_last_error');
-
-        wp_safe_redirect(get_edit_post_link($post_id, 'url') . '#aiss_metabox');
-        exit;
+        wp_safe_redirect(get_edit_post_link($pid).'&aiss_platform='.$plat.'#aiss_metabox'); exit;
     }
 }
