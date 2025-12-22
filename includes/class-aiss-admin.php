@@ -87,7 +87,6 @@ final class Admin {
         }
         .aiss-wrap { max-width: 1200px; margin: 20px auto; font-family: -apple-system, system-ui, sans-serif; color: var(--aiss-text); }
         .aiss-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-        .aiss-icon-box { background: var(--aiss-primary); color: #fff; width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; }
         .aiss-header h1 { margin: 0; font-size: 24px; font-weight: 700; }
         
         /* Tabs */
@@ -195,7 +194,7 @@ CSS;
         $settings = Utils::get_settings();
         
         echo '<div class="wrap aiss-wrap">';
-        echo '<div class="aiss-header"><div class="aiss-icon-box">🚀</div><h1>AI Social Share</h1></div>';
+        echo '<div class="aiss-header"><h1>AI Social Share</h1></div>';
         
         // Show notices
         if (isset($_GET['aiss_notice'])) {
@@ -215,14 +214,14 @@ CSS;
             }
         }
         
-        // Tabs
+        // Tabs (No Emojis)
         $tabs = [
-            'status' => '📊 Status',
-            'general' => '⚙️ General',
-            'facebook' => '📘 Facebook',
-            'x' => '✖️ X / Twitter',
-            'scheduler' => '⏱️ Scheduler',
-            'debug' => '🐛 Debug'
+            'status' => 'Status',
+            'general' => 'General',
+            'facebook' => 'Facebook',
+            'x' => 'X / Twitter',
+            'scheduler' => 'Scheduler',
+            'debug' => 'Debug'
         ];
         echo '<div class="aiss-tabs">';
         foreach ($tabs as $key => $label) {
@@ -269,7 +268,7 @@ CSS;
         echo '<div class="aiss-card"><h2>Facebook Page Connection</h2>';
         
         if ($connected) {
-            echo '<div class="aiss-notice notice-success"><p><strong>✓ Connected:</strong> ' . esc_html($s['fb_page_name']) . '</p></div>';
+            echo '<div class="aiss-notice notice-success"><p><strong>Connected:</strong> ' . esc_html($s['fb_page_name']) . '</p></div>';
             echo '<p><a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_fb_disconnect'),'aiss_fb_disconnect').'" class="aiss-btn aiss-btn-danger">Disconnect</a></p>';
         } else {
             echo '<p class="description">Enter your Facebook App credentials below, then connect.</p>';
@@ -324,7 +323,7 @@ CSS;
 
         echo '<h3>Account Connection</h3>';
         if ($con) {
-            echo '<div class="aiss-notice notice-success"><p><strong>✓ Connected as @'.esc_html($s['x_username']).'</strong></p></div>';
+            echo '<div class="aiss-notice notice-success"><p><strong>Connected as @'.esc_html($s['x_username']).'</strong></p></div>';
             echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_x_disconnect'),'aiss_x_disconnect').'" class="aiss-btn aiss-btn-danger">Disconnect</a>';
         } elseif ($s['x_consumer_key'] && $s['x_consumer_secret']) {
             echo '<p class="description">App keys saved. Connect your account.</p>';
@@ -372,7 +371,7 @@ CSS;
         
         // Health Badge
         $health_class = $health['healthy'] ? 'health-good' : 'health-bad';
-        $health_text = $health['healthy'] ? '✓ Healthy' : '✗ Issues Detected';
+        $health_text = $health['healthy'] ? 'Healthy' : 'Issues Detected';
         
         echo '<div style="margin-bottom:24px">';
         echo '<span class="aiss-health-badge ' . $health_class . '">' . $health_text . '</span>';
@@ -436,8 +435,8 @@ CSS;
         
         // Actions
         echo '<div style="margin-top:24px; display:flex; gap:12px;">';
-        echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_run_cron'),'aiss_run_cron').'" class="aiss-btn">⚡ Run Now</a>';
-        echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_reset_cron'),'aiss_reset_cron').'" class="aiss-btn aiss-btn-secondary">🔄 Reset Cron</a>';
+        echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_run_cron'),'aiss_run_cron').'" class="aiss-btn">Run Now</a>';
+        echo '<a href="'.wp_nonce_url(admin_url('admin-post.php?action=aiss_reset_cron'),'aiss_reset_cron').'" class="aiss-btn aiss-btn-secondary">Reset Cron</a>';
         echo '</div>';
         echo '</div>';
         
@@ -448,7 +447,7 @@ CSS;
         echo '<tr><th>Plugin Version</th><td>'.esc_html($info['version']).'</td></tr>';
         echo '<tr><th>WordPress</th><td>'.esc_html($info['wp_version']).'</td></tr>';
         echo '<tr><th>PHP</th><td>'.esc_html($info['php_version']).'</td></tr>';
-        echo '<tr><th>WP-Cron</th><td>'.($info['wp_cron_enabled']?'<span style="color:#059669">✓ Enabled</span>':'<span style="color:#dc2626">✗ Disabled</span>').'</td></tr>';
+        echo '<tr><th>WP-Cron</th><td>'.($info['wp_cron_enabled']?'<span style="color:#059669">Enabled</span>':'<span style="color:#dc2626">Disabled</span>').'</td></tr>';
         echo '</table></div>';
     }
 

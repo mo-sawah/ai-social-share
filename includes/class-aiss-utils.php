@@ -31,7 +31,7 @@ final class Utils {
             'fb_page_name'       => '',
             'fb_page_token'      => '', // Encrypted
             'fb_connected_at'    => 0,
-            'prompt_facebook'    => "You are a professional social media editor.\n\nWrite a Facebook post for this article.\n- Friendly and engaging tone.\n- 1–2 paragraphs.\n- 2–3 hashtags.\n- No links (link is attached).\n\nReturn ONLY the post text.",
+            'prompt_facebook'    => "You are a professional Social Media Manager creating content for Facebook.\n\nTask: Write an engaging Facebook post about the article provided.\n\nGuidelines:\n- Tone: Professional, informative, and engaging\n- Opening: Use VARIED hooks (surprising fact, question, bold statement, or breaking news angle). NEVER repeat the same opening pattern.\n- Structure: 2-3 concise paragraphs that capture the essence of the story\n- Style: Clear, direct, and compelling - write like a journalist, not a marketer\n- Emojis: Use 1-2 relevant emojis maximum, only if they add value\n- Formatting: Use line breaks for readability\n- Call-to-action: End with a simple invitation to engage or read more\n- Hashtags: Add exactly 3 relevant hashtags at the end\n\nCONSTRAINT: Do NOT include the article URL (it will be added automatically).\n\nReturn ONLY the final post text.",
 
             // --- X (Twitter) ---
             'x_enabled'          => false,
@@ -40,7 +40,7 @@ final class Utils {
             'x_access_token'     => '',  // User Token (saved after login)
             'x_access_secret'    => '',  // User Secret (saved after login)
             'x_username'         => '',  // Connected Account Name
-            'prompt_x'           => "You are a social media manager.\n\nWrite a Tweet for this article.\n- Under 200 chars.\n- Punchy and viral.\n- Max 2 hashtags.\n- No links.\n\nReturn ONLY the tweet text.",
+            'prompt_x'           => "You are a professional Social Media Manager creating content for X (Twitter).\n\nTask: Write a concise, impactful post about this article.\n\nGuidelines:\n- Length: Under 200 characters (leave room for URL)\n- Style: Direct, newsworthy, and punchy\n- Opening: Vary your approach - use breaking news angle, key fact, or compelling statement\n- Tone: Professional and authoritative\n- Hashtags: Maximum 2 hashtags, only if highly relevant\n- Emojis: 0-1 emoji, use sparingly\n\nCONSTRAINT: Do NOT include the article URL (it will be added automatically).\n\nReturn ONLY the tweet text.",
         ];
 
         $saved = get_option('aiss_settings', []);
