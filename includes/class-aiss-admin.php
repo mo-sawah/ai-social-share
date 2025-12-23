@@ -187,7 +187,13 @@ CSS;
         if (isset($in['max_posts_per_run'])) $s['max_posts_per_run'] = max(1, min(20, (int)$in['max_posts_per_run']));
         if (isset($in['filter_mode'])) $s['filter_mode'] = sanitize_key($in['filter_mode']);
         if (isset($in['filter_terms'])) $s['filter_terms'] = sanitize_text_field($in['filter_terms']);
-        $s['share_on_publish'] = isset($in['share_on_publish']); // Checkbox
+        
+        // Only update share_on_publish if we're saving from the scheduler tab
+        // (check if schedule_minutes is in the input, which means we're on scheduler tab)
+        if (isset($in['schedule_minutes'])) {
+            $s['share_on_publish'] = isset($in['share_on_publish']);
+        }
+        // Otherwise preserve the current value
 
         // Facebook
         if (isset($in['fb_app_id'])) $s['fb_app_id'] = sanitize_text_field($in['fb_app_id']);
