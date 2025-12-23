@@ -200,6 +200,7 @@ final class Admin {
             $messages = [
                 'saved' => ['Settings saved successfully', 'success'],
                 'page_selected' => ['Facebook page connected', 'success'],
+                'page_select_failed' => ['Facebook page connection failed', 'error'],
                 'fb_pages_ready' => ['Facebook authorized. Please choose a Page.', 'success'],
                 'fb_error' => ['Facebook connection failed: ' . (isset($_GET['aiss_error']) ? urldecode($_GET['aiss_error']) : 'Unknown error'), 'error'],
 
@@ -213,6 +214,14 @@ final class Admin {
                 'openrouter_error' => ['OpenRouter connection failed: ' . (isset($_GET['aiss_error']) ? urldecode($_GET['aiss_error']) : 'Unknown error'), 'error'],
             ];
             if (isset($messages[$notice])) {
+                // Special: show stored error details for page selection failures
+                if ($notice === 'page_select_failed') {
+                    $err = (string) get_transient('aiss_admin_error_' . get_current_user_id());
+                    if ($err !== '') {
+                        delete_transient('aiss_admin_error_' . get_current_user_id());
+                        $messages[$notice][0] = 'Facebook page connection failed: ' . $err;
+                    }
+                }
                 echo '<div class="aiss-notice notice-' . $messages[$notice][1] . '"><p>' . esc_html($messages[$notice][0]) . '</p></div>';
             }
         }
@@ -319,14 +328,17 @@ final class Admin {
             echo '</div>';
         } elseif ($pages_transient) {
             echo '<div class="aiss-card"><h2>Select Facebook Page</h2>';
-            wp_nonce_field('aiss_fb_select_page', 'aiss_fb_select_page_nonce');
-            echo '<select class="aiss-select" name="page_id" style="margin-bottom:12px">';
-            foreach ($pages_transient as $page) {
-                echo '<option value="' . esc_attr($page['id']) . '">' . esc_html($page['name']) . '</option>';
-            }
-            echo '</select>';
-            echo '<br><button type="submit" class="aiss-btn" formaction="' . esc_url(admin_url('admin-post.php?action=aiss_fb_select_page')) . '" formmethod="post">Connect Page</button>';
-            echo '</div>';
+echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
+wp_nonce_field('aiss_fb_select_page', 'aiss_fb_select_page_nonce');
+echo '<input type="hidden" name="action" value="aiss_fb_select_page">';
+echo '<select class="aiss-select" name="page_id" style="margin-bottom:12px">';
+foreach ($pages_transient as $page) {
+    echo '<option value="' . esc_attr($page['id']) . '">' . esc_html($page['name']) . '</option>';
+}
+echo '</select>';
+echo '<br><button type="submit" class="aiss-btn">Connect Page</button>';
+echo '</form>';
+echo '</div>';
 } else {
             echo '<div class="aiss-card">';
             echo '<h2>Connect Facebook Page</h2>';
@@ -707,12 +719,30 @@ final class Admin {
     }
 
     
-    public function select_fb_page() { 
-        check_admin_referer('aiss_fb_select_page', 'aiss_fb_select_page_nonce'); 
-        $this->facebook->select_page_and_store($_POST['page_id'] ?? ''); 
-        delete_transient('aiss_fb_pages_' . get_current_user_id()); 
-        wp_redirect(Utils::admin_url_settings(['tab' => 'facebook', 'aiss_notice' => 'page_selected'])); 
-        exit; 
+    public function select_fb_page() {
+        // Ensure this handler always redirects back to the settings page
+        if (!current_user_can('manage_options')) {
+            wp_die(__('Sorry, you are not allowed to do that.'), 403);
+        }
+
+        check_admin_referer('aiss_fb_select_page', 'aiss_fb_select_page_nonce');
+
+        $page_id = isset($_POST['page_id']) ? sanitize_text_field((string)$_POST['page_id']) : '';
+        $res = $this->facebook->select_page_and_store($page_id);
+
+        // Clear pages list after attempting selection so UI refreshes correctly
+        delete_transient('aiss_fb_pages_' . get_current_user_id());
+
+        if (is_array($res) && !empty($res['ok'])) {
+            wp_safe_redirect(Utils::admin_url_settings(['tab' => 'facebook', 'aiss_notice' => 'page_selected']));
+            exit;
+        }
+
+        $err = (is_array($res) && !empty($res['error'])) ? (string)$res['error'] : 'Could not connect the selected page.';
+        // Store error briefly so it can be displayed after redirect
+        set_transient('aiss_admin_error_' . get_current_user_id(), $err, 60);
+        wp_safe_redirect(Utils::admin_url_settings(['tab' => 'facebook', 'aiss_notice' => 'page_select_failed']));
+        exit;
     }
     
     public function disconnect_facebook() { 
