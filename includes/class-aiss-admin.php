@@ -174,7 +174,8 @@ CSS;
         $is_general_form = isset($in['openrouter_api_key']) || isset($in['openrouter_model']) || isset($in['post_language']);
         $is_facebook_form = isset($in['fb_app_id']) || isset($in['prompt_facebook']) || isset($in['fb_api_version']);
         $is_x_form = isset($in['x_consumer_key']) || isset($in['prompt_x']);
-        $is_scheduler_form = isset($in['schedule_minutes']) || isset($in['max_posts_per_run']) || isset($in['filter_mode']);
+        // Added _is_scheduler_tab check for reliability
+        $is_scheduler_form = isset($in['_is_scheduler_tab']) || isset($in['schedule_minutes']) || isset($in['max_posts_per_run']) || isset($in['filter_mode']);
 
         // FIX 1: Always update checkboxes for the form being saved
         // This ensures unchecked boxes properly clear the value
@@ -441,6 +442,8 @@ CSS;
     private function render_scheduler($s) {
         echo '<form method="post" action="options.php">'; 
         settings_fields('aiss_settings_group');
+        // Added hidden field for reliable form detection
+        echo '<input type="hidden" name="aiss_settings[_is_scheduler_tab]" value="1">';
         
         echo '<div class="aiss-card"><h2>Sharing Methods</h2>';
         echo '<p class="description">Choose how posts are shared to social media.</p>';
