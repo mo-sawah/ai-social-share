@@ -84,78 +84,13 @@ final class Admin {
     public function enqueue_admin_assets($hook) : void {
         if ($hook !== 'settings_page_ai-social-share') { return; }
         
-        // Enhanced CSS
-        echo <<<'CSS'
-        <style>
-        :root {
-            --aiss-primary: #2563eb; --aiss-primary-hover: #1d4ed8;
-            --aiss-bg: #f3f4f6; --aiss-text: #111827; --aiss-muted: #6b7280; --aiss-border: #e5e7eb;
-            --aiss-success-bg: #ecfdf5; --aiss-success-text: #059669; --aiss-success: #10b981;
-            --aiss-error-bg: #fef2f2; --aiss-error-text: #b91c1c; --aiss-error: #ef4444;
-            --aiss-warning-bg: #fffbeb; --aiss-warning-text: #d97706; --aiss-warning: #f59e0b;
-        }
-        .aiss-wrap { max-width: 1200px; margin: 20px auto; font-family: -apple-system, system-ui, sans-serif; color: var(--aiss-text); }
-        .aiss-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; }
-        .aiss-header h1 { margin: 0; font-size: 24px; font-weight: 700; }
-        
-        /* Tabs */
-        .aiss-tabs { display: flex; gap: 4px; background: #fff; padding: 4px; border-radius: 10px; border: 1px solid var(--aiss-border); margin-bottom: 24px; width: fit-content; }
-        .aiss-tab { padding: 8px 16px; border-radius: 6px; text-decoration: none; color: var(--aiss-muted); font-weight: 500; font-size: 14px; transition: all 0.2s; }
-        .aiss-tab:hover { color: var(--aiss-text); background: #f3f4f6; }
-        .aiss-tab-active { background: var(--aiss-primary); color: #fff !important; font-weight: 600; }
-
-        /* Cards */
-        .aiss-card { background: #fff; border: 1px solid var(--aiss-border); border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-        .aiss-card h2 { margin: 0 0 16px 0; font-size: 18px; font-weight: 600; }
-        .aiss-card p.description { margin-top: 0; color: var(--aiss-muted); font-size: 14px; margin-bottom: 16px; line-height: 1.5; }
-
-        /* Form Elements */
-        .aiss-form-table { width: 100%; border-collapse: collapse; }
-        .aiss-form-table th { text-align: left; padding: 12px 24px 12px 0; width: 220px; vertical-align: top; font-weight: 500; color: #374151; }
-        .aiss-form-table td { padding: 8px 0; }
-        .aiss-input, .aiss-select, .aiss-textarea { width: 100%; max-width: 500px; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px; }
-        .aiss-textarea { font-family: monospace; line-height: 1.5; min-height: 120px; }
-        
-        /* Buttons */
-        .aiss-btn { display: inline-flex; align-items: center; padding: 10px 20px; border-radius: 6px; background: var(--aiss-primary); color: #fff; text-decoration: none; border: none; cursor: pointer; font-size: 14px; font-weight: 500; transition: background 0.2s; }
-        .aiss-btn:hover { background: var(--aiss-primary-hover); color: #fff; }
-        .aiss-btn-danger { background: #dc2626; } .aiss-btn-danger:hover { background: #b91c1c; }
-        .aiss-btn-secondary { background: #fff; border: 1px solid #d1d5db; color: #374151; } .aiss-btn-secondary:hover { background: #f3f4f6; color: #111827; }
-        .aiss-btn-black { background: #000; color: #fff; } .aiss-btn-black:hover { background: #333; color: #fff; }
-        .aiss-btn-sm { padding: 6px 12px; font-size: 13px; }
-
-        /* Status Grid */
-        .aiss-stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 24px; }
-        .aiss-stat-box { background: #fff; padding: 20px; border-radius: 10px; border: 1px solid var(--aiss-border); }
-        .aiss-stat-label { font-size: 12px; color: var(--aiss-muted); text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; margin-bottom: 6px; }
-        .aiss-stat-value { font-size: 20px; font-weight: 700; display: flex; align-items: center; }
-        .aiss-status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
-        .dot-green { background: var(--aiss-success); box-shadow: 0 0 0 3px var(--aiss-success-bg); }
-        .dot-red { background: var(--aiss-error); box-shadow: 0 0 0 3px var(--aiss-error-bg); } 
-        .dot-yellow { background: var(--aiss-warning); box-shadow: 0 0 0 3px var(--aiss-warning-bg); }
-        .dot-gray { background: #9ca3af; }
-
-        /* Notices */
-        .aiss-notice { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; border-left: 4px solid; background: #fff; }
-        .notice-success { border-color: var(--aiss-success); background: var(--aiss-success-bg); color: var(--aiss-success-text); }
-        .notice-error { border-color: var(--aiss-error); background: var(--aiss-error-bg); color: var(--aiss-error-text); }
-        .notice-warning { border-color: var(--aiss-warning); background: var(--aiss-warning-bg); color: var(--aiss-warning-text); }
-        
-        /* Debug Log */
-        .aiss-debug-log { background: #1e1e1e; color: #d4d4d4; padding: 16px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 12px; max-height: 400px; overflow-y: auto; line-height: 1.6; }
-        .aiss-debug-log .log-info { color: #4ec9b0; }
-        .aiss-debug-log .log-warning { color: #dcdcaa; }
-        .aiss-debug-log .log-error { color: #f48771; }
-        
-        /* Health Indicator */
-        .aiss-health-badge { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-        .health-good { background: var(--aiss-success-bg); color: var(--aiss-success-text); }
-        .health-bad { background: var(--aiss-error-bg); color: var(--aiss-error-text); }
-        .health-warning { background: var(--aiss-warning-bg); color: var(--aiss-warning-text); }
-        
-        .settings_page_ai-social-share .notice:not(.aiss-notice) { display: none !important; }
-        </style>
-CSS;
+        // Load the new CSS file
+        wp_enqueue_style(
+            'aiss-admin-style',
+            AISS_PLUGIN_URL . 'assets/css/admin.css',
+            [],
+            AISS_VERSION
+        );
     }
 
     public function register_settings() : void {
@@ -177,7 +112,7 @@ CSS;
         // Strict check for the hidden field we added
         $is_scheduler_form = isset($in['_is_scheduler_tab']);
 
-        // --- 1. HANDLE SYSTEM FIELDS (THE FIX) ---
+        // --- 1. HANDLE SYSTEM FIELDS (CONNECTION FIX) ---
         // These fields are set programmatically by OAuth callbacks.
         // We MUST allow them to pass through or they get deleted.
         $system_fields = [
