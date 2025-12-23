@@ -170,44 +170,57 @@ CSS;
         $s = Utils::get_settings(); 
         $in = is_array($input) ? $input : [];
 
-        // Detect which form is being saved
+        // Detect which form is being saved by checking for unique fields
         $is_general_form = isset($in['openrouter_api_key']);
         $is_facebook_form = isset($in['fb_app_id']);
         $is_x_form = isset($in['x_consumer_key']);
-        
-        // STRICT CHECK: Only update scheduler settings if the hidden field is present.
+        // Strict check for the hidden field we added
         $is_scheduler_form = isset($in['_is_scheduler_tab']);
 
-        // --- CHECKBOX HANDLING ---
+        // --- 1. HANDLE SYSTEM FIELDS (THE FIX) ---
+        // These fields are set programmatically by OAuth callbacks.
+        // We MUST allow them to pass through or they get deleted.
+        $system_fields = [
+            'fb_page_id', 'fb_page_name', 'fb_page_token', 'fb_connected_at',
+            'x_access_token', 'x_access_secret', 'x_username'
+        ];
+
+        foreach ($system_fields as $field) {
+            if (isset($in[$field])) {
+                $s[$field] = $in[$field];
+            }
+        }
+
+        // --- 2. HANDLE CHECKBOXES (FORM SUBMISSION ONLY) ---
         
-        // General Tab Checkboxes
+        // General Tab
         if ($is_general_form) {
             $s['enable_web_search'] = isset($in['enable_web_search']);
             $s['enable_debug_logs'] = isset($in['enable_debug_logs']);
         }
 
-        // Scheduler Tab Checkboxes
+        // Scheduler Tab (Using strict hidden field check)
         if ($is_scheduler_form) {
             $s['share_on_publish'] = isset($in['share_on_publish']);
         }
         
-        // X Tab Checkboxes
+        // X Tab
         if ($is_x_form) {
             $s['x_enabled'] = isset($in['x_enabled']);
         }
 
-        // General Settings
+        // --- 3. HANDLE REGULAR SETTINGS ---
+
+        // General
         if (isset($in['openrouter_api_key'])) $s['openrouter_api_key'] = trim($in['openrouter_api_key']);
         if (isset($in['openrouter_model'])) $s['openrouter_model'] = trim($in['openrouter_model']);
         if (isset($in['post_language'])) $s['post_language'] = sanitize_key($in['post_language']);
 
-        // Scheduler Settings
+        // Scheduler
         if (isset($in['schedule_minutes'])) {
             $old_minutes = (int)$s['schedule_minutes'];
             $new_minutes = max(5, min(1440, (int)$in['schedule_minutes']));
             $s['schedule_minutes'] = $new_minutes;
-            
-            // If schedule changed, force reschedule
             if ($old_minutes !== $new_minutes) {
                 set_transient('aiss_force_reschedule', true, 60);
             }
@@ -215,17 +228,15 @@ CSS;
         if (isset($in['max_posts_per_run'])) $s['max_posts_per_run'] = max(1, min(20, (int)$in['max_posts_per_run']));
         if (isset($in['filter_mode'])) $s['filter_mode'] = sanitize_key($in['filter_mode']);
         if (isset($in['filter_terms'])) $s['filter_terms'] = sanitize_text_field($in['filter_terms']);
-        
-        // New filter for post age
         if (isset($in['filter_post_age'])) $s['filter_post_age'] = sanitize_key($in['filter_post_age']);
 
-        // Facebook Settings
+        // Facebook
         if (isset($in['fb_app_id'])) $s['fb_app_id'] = sanitize_text_field($in['fb_app_id']);
         if (isset($in['fb_app_secret'])) $s['fb_app_secret'] = sanitize_text_field($in['fb_app_secret']);
         if (isset($in['fb_api_version'])) $s['fb_api_version'] = sanitize_text_field($in['fb_api_version']);
         if (isset($in['prompt_facebook'])) $s['prompt_facebook'] = wp_unslash($in['prompt_facebook']);
 
-        // X Settings
+        // X (Twitter)
         if (isset($in['x_consumer_key'])) $s['x_consumer_key'] = sanitize_text_field($in['x_consumer_key']);
         if (isset($in['x_consumer_secret'])) $s['x_consumer_secret'] = sanitize_text_field($in['x_consumer_secret']);
         if (isset($in['prompt_x'])) $s['prompt_x'] = wp_unslash($in['prompt_x']);
