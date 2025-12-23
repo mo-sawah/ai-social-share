@@ -170,28 +170,40 @@ CSS;
         $s = Utils::get_settings(); 
         $in = is_array($input) ? $input : [];
 
-        // Detect which form is being saved by checking for unique fields from each tab
+        // DEBUGGING: Log raw input to see what's coming in
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('AISS DEBUG: Raw Input: ' . print_r($in, true));
+        }
+
+        // Detect which form is being saved
         $is_general_form = isset($in['openrouter_api_key']) || isset($in['openrouter_model']) || isset($in['post_language']);
         $is_facebook_form = isset($in['fb_app_id']) || isset($in['prompt_facebook']) || isset($in['fb_api_version']);
         $is_x_form = isset($in['x_consumer_key']) || isset($in['prompt_x']);
-        // Added _is_scheduler_tab check for reliability
-        $is_scheduler_form = isset($in['_is_scheduler_tab']) || isset($in['schedule_minutes']) || isset($in['max_posts_per_run']) || isset($in['filter_mode']);
+        // Check specifically for our hidden field
+        $is_scheduler_form = isset($in['_is_scheduler_tab']) || isset($in['schedule_minutes']);
 
-        // FIX 1: Always update checkboxes for the form being saved
-        // This ensures unchecked boxes properly clear the value
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("AISS DEBUG: Form Detection - General: " . ($is_general_form?1:0) . ", Scheduler: " . ($is_scheduler_form?1:0));
+        }
+
+        // --- CHECKBOX HANDLING ---
         
-        // General Tab - Always update these checkboxes when saving from General
+        // General Tab Checkboxes
         if ($is_general_form) {
             $s['enable_web_search'] = isset($in['enable_web_search']);
             $s['enable_debug_logs'] = isset($in['enable_debug_logs']);
         }
 
-        // Scheduler Tab - Always update share_on_publish when saving from Scheduler
+        // Scheduler Tab Checkboxes - FIX
         if ($is_scheduler_form) {
             $s['share_on_publish'] = isset($in['share_on_publish']);
+            
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                error_log("AISS DEBUG: Updated share_on_publish to: " . ($s['share_on_publish'] ? 'TRUE' : 'FALSE'));
+            }
         }
         
-        // X Tab - Always update x_enabled when saving from X tab
+        // X Tab Checkboxes
         if ($is_x_form) {
             $s['x_enabled'] = isset($in['x_enabled']);
         }
@@ -216,7 +228,7 @@ CSS;
         if (isset($in['filter_mode'])) $s['filter_mode'] = sanitize_key($in['filter_mode']);
         if (isset($in['filter_terms'])) $s['filter_terms'] = sanitize_text_field($in['filter_terms']);
         
-        // FIX 5: New filter for post age
+        // New filter for post age
         if (isset($in['filter_post_age'])) $s['filter_post_age'] = sanitize_key($in['filter_post_age']);
 
         // Facebook Settings
@@ -392,7 +404,6 @@ CSS;
     }
 
     private function render_x($s) {
-        // FIX 2: Improved X connection status check
         $is_connected = $this->x->is_connected();
         
         echo '<form method="post" action="options.php">'; 
@@ -409,7 +420,7 @@ CSS;
         echo '<tr><th>API Secret (Consumer Secret)</th><td><input type="password" class="aiss-input" name="aiss_settings[x_consumer_secret]" value="' . esc_attr($s['x_consumer_secret']) . '" autocomplete="off"></td></tr>';
         echo '</table></div>';
         
-        // Connection Status with improved display
+        // Connection Status
         if ($is_connected) {
             echo '<div class="aiss-card" style="background:var(--aiss-success-bg); border-color:var(--aiss-success)">';
             echo '<h2 style="color:var(--aiss-success-text)">✓ Connected to X</h2>';
@@ -442,7 +453,7 @@ CSS;
     private function render_scheduler($s) {
         echo '<form method="post" action="options.php">'; 
         settings_fields('aiss_settings_group');
-        // Added hidden field for reliable form detection
+        // HIDDEN FIELD: Crucial for determining if we are on the scheduler page
         echo '<input type="hidden" name="aiss_settings[_is_scheduler_tab]" value="1">';
         
         echo '<div class="aiss-card"><h2>Sharing Methods</h2>';
@@ -472,7 +483,7 @@ CSS;
         echo '<p class="description">Limit which posts are auto-shared.</p>';
         echo '<table class="aiss-form-table">';
         
-        // FIX 5: Added Post Age Filter
+        // Post Age Filter
         echo '<tr><th>Post Age</th><td>';
         echo '<select class="aiss-select" name="aiss_settings[filter_post_age]">';
         $age_options = [
@@ -555,7 +566,6 @@ CSS;
         
         echo '<div class="aiss-stat-box">';
         echo '<div class="aiss-stat-label">X (Twitter)</div>';
-        // FIX 2: Better status display for X
         $x_status_class = $x ? 'dot-green' : 'dot-gray';
         $x_status_text = $x ? 'Connected' : ($s['x_enabled'] ? 'Not Connected' : 'Disabled');
         echo '<div class="aiss-stat-value"><span class="aiss-status-dot ' . $x_status_class . '"></span>' . $x_status_text . '</div>';
@@ -563,7 +573,6 @@ CSS;
         
         echo '<div class="aiss-stat-box">';
         echo '<div class="aiss-stat-label">Next Run</div>';
-        // FIX 6: Fixed negative time display
         if ($nxt && $nxt > time()) {
             $time_until = human_time_diff(time(), $nxt);
             echo '<div class="aiss-stat-value">In ' . $time_until . '</div>';
@@ -736,7 +745,7 @@ CSS;
             $s['x_access_token'] = $res['token'];
             $s['x_access_secret'] = $res['secret'];
             $s['x_username'] = $res['screen_name'];
-            $s['x_enabled'] = true; // FIX 2: Auto-enable X when successfully connected
+            $s['x_enabled'] = true; 
             Utils::update_settings($s);
             wp_redirect(Utils::admin_url_settings(['tab' => 'x', 'aiss_notice' => 'x_connected']));
         } else {
@@ -787,7 +796,6 @@ CSS;
         exit;
     }
     
-    // FIX 3: Test OpenRouter Connection
     public function test_openrouter() {
         check_admin_referer('aiss_test_openrouter');
         
