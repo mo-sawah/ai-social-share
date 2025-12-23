@@ -38,9 +38,7 @@ final class SimpleScheduler {
         add_filter('cron_schedules', [$this, 'add_cron_schedule']);
         
         // Ensure cron is scheduled
-        if (!wp_next_scheduled('aiss_simple_cron')) {
-            wp_schedule_event(time() + 60, 'aiss_every_30min', 'aiss_simple_cron');
-        }
+        $this->ensure_scheduled();
     }
 
     /**
@@ -52,6 +50,31 @@ final class SimpleScheduler {
             'display' => 'Every 30 Minutes (AI Social Share)'
         ];
         return $schedules;
+    }
+    
+    /**
+     * Ensure cron is scheduled
+     */
+    public function ensure_scheduled($force = false) {
+        if ($force) {
+            $this->clear_scheduled();
+        }
+        
+        if (!wp_next_scheduled('aiss_simple_cron')) {
+            wp_schedule_event(time() + 60, 'aiss_every_30min', 'aiss_simple_cron');
+            self::log('Cron scheduled successfully');
+        }
+    }
+    
+    /**
+     * Clear scheduled events
+     */
+    public function clear_scheduled() {
+        $timestamp = wp_next_scheduled('aiss_simple_cron');
+        if ($timestamp) {
+            wp_unschedule_event($timestamp, 'aiss_simple_cron');
+            self::log('Cron unscheduled');
+        }
     }
 
     /**
@@ -213,7 +236,7 @@ final class SimpleScheduler {
 
             self::log("Networks: FB=" . ($fb_connected ? 'YES' : 'NO') . ", X=" . ($x_connected ? 'YES' : 'NO'));
 
-            // Build query
+            // Build query with improved date filter
             $args = [
                 'post_type'      => 'post',
                 'post_status'    => 'publish',
@@ -221,12 +244,16 @@ final class SimpleScheduler {
                 'fields'         => 'ids',
                 'orderby'        => 'date',
                 'order'          => 'DESC',
-                'date_query'     => [
-                    ['after' => '7 days ago']
-                ]
             ];
 
-            // Apply filters
+            // FIX 5: Apply post age filter
+            $post_age = $settings['filter_post_age'] ?? '7d';
+            $date_query = $this->get_date_query_for_age($post_age);
+            if ($date_query) {
+                $args['date_query'] = [$date_query];
+            }
+
+            // Apply category/tag filters
             if ($settings['filter_mode'] !== 'all' && !empty($settings['filter_terms'])) {
                 $tax = $settings['filter_mode'] === 'category' ? 'category' : 'post_tag';
                 $slugs = explode(',', $settings['filter_terms']);
@@ -242,7 +269,7 @@ final class SimpleScheduler {
             $posts = get_posts($args);
             $total_posts = count($posts);
             
-            self::log("Found {$total_posts} posts to process");
+            self::log("Found {$total_posts} posts to process (Age filter: {$post_age})");
 
             if ($total_posts === 0) {
                 return;
@@ -288,6 +315,25 @@ final class SimpleScheduler {
             delete_transient('aiss_processing_lock');
         }
     }
+    
+    /**
+     * Get date query based on age filter
+     */
+    private function get_date_query_for_age($age) {
+        switch ($age) {
+            case '24h':
+                return ['after' => '24 hours ago'];
+            case '48h':
+                return ['after' => '48 hours ago'];
+            case '7d':
+                return ['after' => '7 days ago'];
+            case '30d':
+                return ['after' => '30 days ago'];
+            case 'all':
+            default:
+                return null;
+        }
+    }
 
     /**
      * Process a single post
@@ -329,7 +375,7 @@ final class SimpleScheduler {
             }
         }
 
-        // Delay
+        // Delay between platforms
         if ($this->facebook->is_connected() && $this->x->is_connected()) {
             sleep(15);
         }

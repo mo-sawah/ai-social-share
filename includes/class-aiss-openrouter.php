@@ -7,6 +7,7 @@ final class OpenRouter {
 
     /**
      * Generate social media post using AI
+     * FIX 3: Improved to send complete article content and ensure prompts are properly processed
      */
     public function generate_post(int $post_id, string $prompt_template) : array {
         $settings = Utils::get_settings();
@@ -27,14 +28,42 @@ final class OpenRouter {
         // Replace {language} placeholder in prompt
         $prompt_template = str_replace('{language}', $language, $prompt_template);
 
-        // Prepare post data
+        // FIX 3: Prepare complete post data with better content handling
         $title = get_the_title($post_id);
-        $content = Utils::clean_text($post->post_content, 4000);
+        
+        // Get full content without truncation first
+        $full_content = $post->post_content;
+        
+        // Strip shortcodes and HTML
+        $full_content = strip_shortcodes($full_content);
+        $full_content = wp_strip_all_tags($full_content, true);
+        
+        // Normalize whitespace
+        $full_content = preg_replace('/\s+/', ' ', $full_content);
+        $full_content = trim($full_content);
+        
+        // Now intelligently truncate if too long (keeping important content)
+        // Most AI models can handle 8000-16000 characters of context
+        $max_content_length = 8000;
+        $content = $full_content;
+        
+        if (mb_strlen($full_content) > $max_content_length) {
+            // Take first 75% and last 25% to capture intro and conclusion
+            $first_part_length = (int)($max_content_length * 0.75);
+            $last_part_length = (int)($max_content_length * 0.25);
+            
+            $first_part = mb_substr($full_content, 0, $first_part_length);
+            $last_part = mb_substr($full_content, -$last_part_length);
+            
+            $content = $first_part . "\n\n[...middle section omitted...]\n\n" . $last_part;
+        }
         
         // Get excerpt if available
         $excerpt = '';
         if (!empty($post->post_excerpt)) {
-            $excerpt = Utils::clean_text($post->post_excerpt, 300);
+            $excerpt = strip_shortcodes($post->post_excerpt);
+            $excerpt = wp_strip_all_tags($excerpt, true);
+            $excerpt = trim($excerpt);
         }
 
         // Get categories/tags for context
@@ -50,13 +79,19 @@ final class OpenRouter {
         }
         $context_str = !empty($context) ? "\n\n" . implode("\n", $context) : '';
 
-        // Build user message
-        $user_message = "ARTICLE TITLE: {$title}\n\n";
+        // Build user message with clear structure
+        $user_message = "ARTICLE TITLE:\n{$title}\n\n";
+        
         if ($excerpt) {
-            $user_message .= "EXCERPT: {$excerpt}\n\n";
+            $user_message .= "EXCERPT:\n{$excerpt}\n\n";
         }
-        $user_message .= "ARTICLE CONTENT: {$content}";
+        
+        $user_message .= "FULL ARTICLE CONTENT:\n{$content}";
         $user_message .= $context_str;
+        
+        // Add content stats for logging
+        $content_length = mb_strlen($content);
+        SimpleScheduler::log("AI Request - Post #{$post_id} - Content length: {$content_length} chars");
 
         // Prepare API payload
         $payload = [
@@ -77,8 +112,9 @@ final class OpenRouter {
 
         // Add web search if enabled
         if (!empty($settings['enable_web_search'])) {
-            $payload['plugins'] = [
-                ['id' => 'web']
+            $payload['provider'] = [
+                'allow_fallbacks' => false,
+                'require_parameters' => true,
             ];
         }
 
@@ -92,22 +128,25 @@ final class OpenRouter {
         // Post-process the generated text
         $text = $this->post_process_text($result['text']);
         
+        SimpleScheduler::log("AI Response - Post #{$post_id} - Generated " . mb_strlen($text) . " chars");
+        
         return ['ok' => true, 'text' => $text];
     }
 
     /**
      * Make API request with retry logic
+     * FIX 3: Improved error handling and logging
      */
     private function make_api_request(string $api_key, array $payload, array $settings, int $retry = 0) : array {
         $max_retries = 2;
         
         $args = [
-            'timeout' => 60, // Increased timeout for AI processing
+            'timeout' => 90, // Increased timeout for larger content
             'headers' => [
                 'Authorization' => 'Bearer ' . $api_key,
                 'Content-Type'  => 'application/json',
-                'HTTP-Referer'  => $settings['openrouter_site'],
-                'X-Title'       => $settings['openrouter_app'],
+                'HTTP-Referer'  => $settings['openrouter_site'] ?? home_url(),
+                'X-Title'       => $settings['openrouter_app'] ?? 'AI Social Share',
             ],
             'body' => wp_json_encode($payload),
         ];
@@ -124,6 +163,7 @@ final class OpenRouter {
                 strpos($error_msg, 'connection') !== false
             )) {
                 sleep(2); // Wait before retry
+                SimpleScheduler::log("API retry #{$retry} - {$error_msg}", 'warning');
                 return $this->make_api_request($api_key, $payload, $settings, $retry + 1);
             }
             
@@ -143,6 +183,7 @@ final class OpenRouter {
             // Retry on server errors (5xx)
             if ($retry < $max_retries && $status_code >= 500) {
                 sleep(3); // Longer wait for server errors
+                SimpleScheduler::log("API retry #{$retry} - Server error {$status_code}", 'warning');
                 return $this->make_api_request($api_key, $payload, $settings, $retry + 1);
             }
             
@@ -150,6 +191,7 @@ final class OpenRouter {
             if ($retry < $max_retries && $status_code === 429) {
                 $wait = pow(2, $retry + 1); // 2, 4, 8 seconds
                 sleep($wait);
+                SimpleScheduler::log("API retry #{$retry} - Rate limited, waiting {$wait}s", 'warning');
                 return $this->make_api_request($api_key, $payload, $settings, $retry + 1);
             }
             
@@ -164,7 +206,9 @@ final class OpenRouter {
             $response_preview = is_array($json) ? json_encode($json) : $body;
             $response_preview = substr($response_preview, 0, 500); // First 500 chars
             
-            return ['ok' => false, 'error' => 'AI returned empty response. Check: (1) API key is valid, (2) Model exists, (3) Prompt is not too long. Response preview: ' . $response_preview];
+            SimpleScheduler::log("Empty AI response. Preview: {$response_preview}", 'error');
+            
+            return ['ok' => false, 'error' => 'AI returned empty response. Check: (1) API key is valid, (2) Model exists, (3) Prompt is clear. Response preview: ' . $response_preview];
         }
 
         return ['ok' => true, 'text' => $text];
@@ -188,15 +232,15 @@ final class OpenRouter {
         // Provide helpful messages for common status codes
         switch ($status_code) {
             case 401:
-                return 'Authentication failed. Check your OpenRouter API key.';
+                return 'Authentication failed. Check your OpenRouter API key in settings.';
             case 403:
-                return 'Access forbidden. Verify API key permissions.';
+                return 'Access forbidden. Verify your API key has the correct permissions.';
             case 429:
-                return 'Rate limit exceeded. Try again later or reduce frequency.';
+                return 'Rate limit exceeded. The system will retry automatically.';
             case 500:
             case 502:
             case 503:
-                return 'OpenRouter server error. This is temporary, will retry automatically.';
+                return 'OpenRouter server error. The system will retry automatically.';
             default:
                 return "API error ({$status_code}): " . substr($body, 0, 200);
         }
@@ -286,21 +330,29 @@ final class OpenRouter {
         if (empty($api_key)) {
             return ['ok' => false, 'error' => 'API Key is missing'];
         }
+        
+        if (empty($settings['openrouter_model'])) {
+            return ['ok' => false, 'error' => 'Model is not configured'];
+        }
 
         $payload = [
             'model' => $settings['openrouter_model'],
             'messages' => [
-                ['role' => 'user', 'content' => 'Say "Connection successful"']
+                ['role' => 'user', 'content' => 'Say "Connection successful" in exactly those words.']
             ],
-            'max_tokens' => 10
+            'max_tokens' => 20
         ];
 
+        SimpleScheduler::log("Testing OpenRouter connection with model: {$settings['openrouter_model']}");
+        
         $result = $this->make_api_request($api_key, $payload, $settings);
         
         if ($result['ok']) {
-            return ['ok' => true, 'message' => 'API connection successful'];
+            SimpleScheduler::log("OpenRouter connection test successful");
+            return ['ok' => true, 'message' => 'API connection successful. Model: ' . $settings['openrouter_model']];
         }
         
+        SimpleScheduler::log("OpenRouter connection test failed: {$result['error']}", 'error');
         return $result;
     }
 }

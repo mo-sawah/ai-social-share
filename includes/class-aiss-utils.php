@@ -20,6 +20,7 @@ final class Utils {
             'max_posts_per_run'  => 2,
             'filter_mode'        => 'all', // all, category, or tag
             'filter_terms'       => '',
+            'filter_post_age'    => '7d', // 24h, 48h, 7d, 30d, or all
             'share_on_publish'   => false, // Share immediately when publishing
             
             // --- Debug ---
