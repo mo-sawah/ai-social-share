@@ -328,18 +328,15 @@ final class Admin {
             echo '</div>';
         } elseif ($pages_transient) {
             echo '<div class="aiss-card"><h2>Select Facebook Page</h2>';
-echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
-wp_nonce_field('aiss_fb_select_page', 'aiss_fb_select_page_nonce');
-echo '<input type="hidden" name="action" value="aiss_fb_select_page">';
-echo '<select class="aiss-select" name="page_id" style="margin-bottom:12px">';
-foreach ($pages_transient as $page) {
-    echo '<option value="' . esc_attr($page['id']) . '">' . esc_html($page['name']) . '</option>';
-}
-echo '</select>';
-echo '<br><button type="submit" class="aiss-btn">Connect Page</button>';
-echo '</form>';
-echo '</div>';
-} else {
+            echo '<p>Choose which Facebook Page to post to.</p>';
+            echo '<select class="aiss-select" name="page_id" form="aiss_fb_select_form" style="margin-bottom:12px">';
+            foreach ($pages_transient as $page) {
+                echo '<option value="' . esc_attr($page['id']) . '">' . esc_html($page['name']) . '</option>';
+            }
+            echo '</select>';
+            echo '<br><button type="submit" class="aiss-btn" form="aiss_fb_select_form">Connect Page</button>';
+            echo '</div>';
+        } else {
             echo '<div class="aiss-card">';
             echo '<h2>Connect Facebook Page</h2>';
             echo '<p>Click below to authenticate and select a Facebook page.</p>';
@@ -354,6 +351,15 @@ echo '</div>';
         echo '</div>';
         
         echo '<button type="submit" class="aiss-btn">Save Facebook Settings</button></form>';
+
+        // Hidden standalone form for Page selection (avoids invalid nested forms).
+        if ($pages_transient) {
+            echo '<form id="aiss_fb_select_form" method="post" action="' . esc_url(admin_url('admin-post.php')) . '" style="display:none">';
+            wp_nonce_field('aiss_fb_select_page', 'aiss_fb_select_page_nonce');
+            echo '<input type="hidden" name="action" value="aiss_fb_select_page">';
+            echo '</form>';
+        }
+
     }
 
     private function render_x($s) {
