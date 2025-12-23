@@ -15,6 +15,8 @@ final class Admin {
 
         add_action('admin_menu', [$this, 'menu']);
         add_action('admin_init', [$this, 'register_settings']);
+        // Handle Facebook OAuth callback returning to the settings page
+        add_action('admin_init', [$this, 'maybe_handle_fb_callback'], 20);
         add_action('admin_notices', [$this, 'admin_notices']);
         
         // --- Form Handlers ---
@@ -133,12 +135,11 @@ final class Admin {
             $s['enable_web_search'] = isset($in['enable_web_search']);
             $s['enable_debug_logs'] = isset($in['enable_debug_logs']);
         }
-
-        // Scheduler Tab (Using strict hidden field check)
-        if ($is_scheduler_form) {
+        // Share on Publish (appears on General + Scheduler tabs)
+        if ($is_general_form || $is_scheduler_form) {
             $s['share_on_publish'] = isset($in['share_on_publish']);
         }
-        
+
         // X Tab
         if ($is_x_form) {
             $s['x_enabled'] = isset($in['x_enabled']);
@@ -194,6 +195,9 @@ final class Admin {
             $messages = [
                 'saved' => ['Settings saved successfully', 'success'],
                 'page_selected' => ['Facebook page connected', 'success'],
+                'fb_pages_ready' => ['Facebook authorized. Please choose a Page.', 'success'],
+                'fb_error' => ['Facebook connection failed: ' . (isset($_GET['aiss_error']) ? urldecode($_GET['aiss_error']) : 'Unknown error'), 'error'],
+
                 'disconnected' => ['Disconnected successfully', 'success'],
                 'x_connected' => ['X account connected successfully', 'success'],
                 'x_error' => ['X connection failed: ' . (isset($_GET['aiss_error']) ? urldecode($_GET['aiss_error']) : 'Unknown error'), 'error'],
@@ -643,6 +647,62 @@ final class Admin {
         wp_redirect($this->facebook->build_oauth_url()); 
         exit; 
     }
+
+    /**
+     * Handle Facebook OAuth callback when returning to the settings page.
+     * Facebook redirects to: options-general.php?page=ai-social-share&tab=facebook&aiss_fb_cb=1&code=...&state=...
+     */
+    public function maybe_handle_fb_callback() : void {
+        if (!is_admin() || !current_user_can('manage_options')) {
+            return;
+        }
+
+        // Ensure we are on our settings page + Facebook tab
+        if (empty($_GET['page']) || $_GET['page'] !== 'ai-social-share') {
+            return;
+        }
+        $tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : '';
+        if ($tab !== 'facebook') {
+            return;
+        }
+        if (!isset($_GET['aiss_fb_cb'])) {
+            return;
+        }
+
+        $code  = isset($_GET['code']) ? sanitize_text_field(wp_unslash($_GET['code'])) : '';
+        $state = isset($_GET['state']) ? sanitize_text_field(wp_unslash($_GET['state'])) : '';
+
+        if ($code === '' || $state === '') {
+            wp_redirect(Utils::admin_url_settings([
+                'tab' => 'facebook',
+                'aiss_notice' => 'fb_error',
+                'aiss_error' => urlencode('Missing OAuth parameters (code/state).'),
+            ]));
+            exit;
+        }
+
+        $res = $this->facebook->handle_callback_and_fetch_pages($code, $state);
+
+        if (!empty($res['ok'])) {
+            // Store pages for selection UI (20 minutes)
+            set_transient('aiss_fb_pages_' . get_current_user_id(), $res['pages'] ?? [], 20 * MINUTE_IN_SECONDS);
+
+            wp_redirect(Utils::admin_url_settings([
+                'tab' => 'facebook',
+                'aiss_notice' => 'fb_pages_ready',
+            ]));
+            exit;
+        }
+
+        $err = $res['error'] ?? 'Unknown error';
+        wp_redirect(Utils::admin_url_settings([
+            'tab' => 'facebook',
+            'aiss_notice' => 'fb_error',
+            'aiss_error' => urlencode($err),
+        ]));
+        exit;
+    }
+
     
     public function select_fb_page() { 
         check_admin_referer('aiss_fb_select_page', 'aiss_fb_select_page_nonce'); 
