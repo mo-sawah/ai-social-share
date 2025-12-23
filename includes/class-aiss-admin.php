@@ -4,12 +4,12 @@ namespace AISS;
 if (!defined('ABSPATH')) { exit; }
 
 final class Admin {
-    private $cron;
+    private $scheduler;
     private $facebook;
     private $x;
 
-    public function __construct(Cron $cron, Facebook $facebook, X $x) {
-        $this->cron = $cron;
+    public function __construct($scheduler, Facebook $facebook, X $x) {
+        $this->scheduler = $scheduler;
         $this->facebook = $facebook;
         $this->x = $x;
 
@@ -61,13 +61,19 @@ final class Admin {
             echo '</p></div>';
         }
 
-        // Check cron health
-        $health = Cron::get_health_status();
-        if (!$health['healthy'] && !empty($health['issues'])) {
+        // Check scheduler health
+        if (class_exists('AISS\Scheduler')) {
+            $status = \AISS\Scheduler::get_status();
+        } elseif (class_exists('AISS\SimpleScheduler')) {
+            $status = \AISS\SimpleScheduler::get_status();
+        } else {
+            return;
+        }
+        
+        if (!$status['active'] || !$status['next_run']) {
             echo '<div class="notice notice-error"><p>';
-            echo '<strong>Cron Issue Detected:</strong> ';
-            echo implode('; ', $health['issues']);
-            echo ' <a href="' . wp_nonce_url(admin_url('admin-post.php?action=aiss_reset_cron'), 'aiss_reset_cron') . '">Reset Cron</a>';
+            echo '<strong>Scheduler Issue:</strong> Tasks not scheduled. ';
+            echo '<a href="' . wp_nonce_url(admin_url('admin-post.php?action=aiss_reset_cron'), 'aiss_reset_cron') . '">Reset Scheduler</a>';
             echo '</p></div>';
         }
     }
@@ -407,23 +413,36 @@ CSS;
     private function render_status($s) {
         $fb = $this->facebook->is_connected();
         $x = $this->x->is_connected();
-        $health = Cron::get_health_status();
-        $nxt = $health['next_run'];
-        $last_run = $health['last_run'];
+        
+        // Get status from whichever scheduler is loaded
+        if (class_exists('AISS\Scheduler')) {
+            $status = \AISS\Scheduler::get_status();
+        } elseif (class_exists('AISS\SimpleScheduler')) {
+            $status = \AISS\SimpleScheduler::get_status();
+        } else {
+            $status = ['active' => false, 'next_run' => null, 'last_run' => 0];
+        }
+        
+        $nxt = $status['next_run'];
+        $last_run = $status['last_run'];
         $stats = get_option('aiss_last_run_stats', []);
         
-        // Auto-fix: If cron is not scheduled and we just loaded the page, schedule it
-        if (!$nxt || get_transient('aiss_force_reschedule')) {
-            Cron::ensure_scheduled(true);
+        // Auto-fix: If not scheduled, schedule it
+        if (!$nxt || !$status['active'] || get_transient('aiss_force_reschedule')) {
+            $this->scheduler->ensure_scheduled();
             delete_transient('aiss_force_reschedule');
-            // Refresh health status
-            $health = Cron::get_health_status();
-            $nxt = $health['next_run'];
+            // Refresh status
+            if (class_exists('AISS\Scheduler')) {
+                $status = \AISS\Scheduler::get_status();
+            } elseif (class_exists('AISS\SimpleScheduler')) {
+                $status = \AISS\SimpleScheduler::get_status();
+            }
+            $nxt = $status['next_run'];
         }
         
         // Health Badge
-        $health_class = $health['healthy'] ? 'health-good' : 'health-bad';
-        $health_text = $health['healthy'] ? 'Healthy' : 'Issues Detected';
+        $health_class = ($status['active'] && $nxt) ? 'health-good' : 'health-bad';
+        $health_text = ($status['active'] && $nxt) ? 'Healthy' : 'Issues Detected';
         
         echo '<div style="margin-bottom:24px">';
         echo '<span class="aiss-health-badge ' . $health_class . '">' . $health_text . '</span>';
@@ -648,22 +667,27 @@ CSS;
 
     public function run_cron_manually() {
         check_admin_referer('aiss_run_cron'); 
-        $this->cron->run();
+        $this->scheduler->process_queue();
         wp_redirect(Utils::admin_url_settings(['tab'=>'status','aiss_notice'=>'cron_run'])); 
         exit;
     }
     
     public function reset_cron() {
         check_admin_referer('aiss_reset_cron');
-        Cron::clear_schedule();
-        Cron::ensure_scheduled(true);
+        $this->scheduler->clear_scheduled();
+        $this->scheduler->ensure_scheduled(true);
         wp_redirect(Utils::admin_url_settings(['tab'=>'status','aiss_notice'=>'cron_reset'])); 
         exit;
     }
     
     public function clear_log() {
         check_admin_referer('aiss_clear_log');
-        Cron::clear_log();
+        // Use static method from whichever scheduler class is loaded
+        if (class_exists('AISS\Scheduler')) {
+            \AISS\Scheduler::clear_log();
+        } elseif (class_exists('AISS\SimpleScheduler')) {
+            \AISS\SimpleScheduler::clear_log();
+        }
         wp_redirect(Utils::admin_url_settings(['tab'=>'debug','aiss_notice'=>'log_cleared'])); 
         exit;
     }
