@@ -20,6 +20,7 @@ final class Utils {
             'max_posts_per_run'  => 2,
             'filter_mode'        => 'all', // all, category, or tag
             'filter_terms'       => '',
+            'share_on_publish'   => false, // Share immediately when publishing
             
             // --- Debug ---
             'enable_debug_logs'  => false,

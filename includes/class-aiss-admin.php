@@ -181,6 +181,7 @@ CSS;
         if (isset($in['max_posts_per_run'])) $s['max_posts_per_run'] = max(1, min(20, (int)$in['max_posts_per_run']));
         if (isset($in['filter_mode'])) $s['filter_mode'] = sanitize_key($in['filter_mode']);
         if (isset($in['filter_terms'])) $s['filter_terms'] = sanitize_text_field($in['filter_terms']);
+        $s['share_on_publish'] = isset($in['share_on_publish']); // Checkbox
 
         // Facebook
         if (isset($in['fb_app_id'])) $s['fb_app_id'] = sanitize_text_field($in['fb_app_id']);
@@ -371,10 +372,22 @@ CSS;
     private function render_scheduler($s) {
         echo '<form method="post" action="options.php">'; settings_fields('aiss_settings_group');
         
-        echo '<div class="aiss-card"><h2>Schedule Settings</h2><p class="description">Control frequency and batch size.</p>';
+        echo '<div class="aiss-card"><h2>Sharing Methods</h2>';
+        echo '<p class="description">Choose how posts are shared to social media.</p>';
         echo '<table class="aiss-form-table">';
-        echo '<tr><th>Check Every</th><td><input type="number" class="aiss-input" name="aiss_settings[schedule_minutes]" value="'.(int)$s['schedule_minutes'].'" min="5" max="1440" style="width:100px"> minutes</td></tr>';
-        echo '<tr><th>Posts per Batch</th><td><input type="number" class="aiss-input" name="aiss_settings[max_posts_per_run]" value="'.(int)$s['max_posts_per_run'].'" min="1" max="20" style="width:100px"></td></tr>';
+        echo '<tr><th>Share on Publish</th><td>';
+        echo '<label><input type="checkbox" name="aiss_settings[share_on_publish]" value="1" '.checked($s['share_on_publish']??false,true,false).'> ';
+        echo '<strong>Share immediately when publishing posts</strong></label>';
+        echo '<br><small style="color:#6b7280">Recommended! Posts share instantly when you click "Publish" - no waiting for cron.</small>';
+        echo '</td></tr>';
+        echo '</table></div>';
+        
+        echo '<div class="aiss-card"><h2>Background Schedule</h2><p class="description">For sharing existing posts that weren\'t shared yet.</p>';
+        echo '<table class="aiss-form-table">';
+        echo '<tr><th>Check Every</th><td><input type="number" class="aiss-input" name="aiss_settings[schedule_minutes]" value="'.(int)$s['schedule_minutes'].'" min="5" max="1440" style="width:100px"> minutes';
+        echo '<br><small style="color:#6b7280">Background task checks for unshared posts every X minutes</small></td></tr>';
+        echo '<tr><th>Posts per Batch</th><td><input type="number" class="aiss-input" name="aiss_settings[max_posts_per_run]" value="'.(int)$s['max_posts_per_run'].'" min="1" max="20" style="width:100px">';
+        echo '<br><small style="color:#6b7280">How many posts to process each time</small></td></tr>';
         echo '</table></div>';
         
         echo '<div class="aiss-card"><h2>Filters</h2><p class="description">Limit which posts are auto-shared.</p>';
@@ -384,7 +397,8 @@ CSS;
             echo '<option value="'.$k.'" '.selected($s['filter_mode'],$k,false).'>'.$v.'</option>';
         }
         echo '</select></td></tr>';
-        echo '<tr><th>Slugs</th><td><input class="aiss-input" name="aiss_settings[filter_terms]" value="'.esc_attr($s['filter_terms']).'" placeholder="news, tech"></td></tr>';
+        echo '<tr><th>Slugs</th><td><input class="aiss-input" name="aiss_settings[filter_terms]" value="'.esc_attr($s['filter_terms']).'" placeholder="news, tech">';
+        echo '<br><small style="color:#6b7280">Comma-separated category/tag slugs</small></td></tr>';
         echo '</table></div>';
         
         echo '<button type="submit" class="aiss-btn">Save Schedule Settings</button></form>';
