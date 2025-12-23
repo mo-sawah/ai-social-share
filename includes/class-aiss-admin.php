@@ -170,21 +170,13 @@ CSS;
         $s = Utils::get_settings(); 
         $in = is_array($input) ? $input : [];
 
-        // DEBUGGING: Log raw input to see what's coming in
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log('AISS DEBUG: Raw Input: ' . print_r($in, true));
-        }
-
         // Detect which form is being saved
-        $is_general_form = isset($in['openrouter_api_key']) || isset($in['openrouter_model']) || isset($in['post_language']);
-        $is_facebook_form = isset($in['fb_app_id']) || isset($in['prompt_facebook']) || isset($in['fb_api_version']);
-        $is_x_form = isset($in['x_consumer_key']) || isset($in['prompt_x']);
-        // Check specifically for our hidden field
-        $is_scheduler_form = isset($in['_is_scheduler_tab']) || isset($in['schedule_minutes']);
-
-        if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log("AISS DEBUG: Form Detection - General: " . ($is_general_form?1:0) . ", Scheduler: " . ($is_scheduler_form?1:0));
-        }
+        $is_general_form = isset($in['openrouter_api_key']);
+        $is_facebook_form = isset($in['fb_app_id']);
+        $is_x_form = isset($in['x_consumer_key']);
+        
+        // STRICT CHECK: Only update scheduler settings if the hidden field is present.
+        $is_scheduler_form = isset($in['_is_scheduler_tab']);
 
         // --- CHECKBOX HANDLING ---
         
@@ -194,13 +186,9 @@ CSS;
             $s['enable_debug_logs'] = isset($in['enable_debug_logs']);
         }
 
-        // Scheduler Tab Checkboxes - FIX
+        // Scheduler Tab Checkboxes
         if ($is_scheduler_form) {
             $s['share_on_publish'] = isset($in['share_on_publish']);
-            
-            if (defined('WP_DEBUG') && WP_DEBUG) {
-                error_log("AISS DEBUG: Updated share_on_publish to: " . ($s['share_on_publish'] ? 'TRUE' : 'FALSE'));
-            }
         }
         
         // X Tab Checkboxes
