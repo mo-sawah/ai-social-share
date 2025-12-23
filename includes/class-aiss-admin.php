@@ -111,10 +111,15 @@ final class Admin {
         $is_general_form = isset($in['openrouter_api_key']);
         $is_facebook_form = isset($in['fb_app_id']);
         $is_x_form = isset($in['x_consumer_key']);
-        // Strict check for the hidden field we added
-        $is_scheduler_form = isset($in['_is_scheduler_tab']);
-
-        // --- 1. HANDLE SYSTEM FIELDS (CONNECTION FIX) ---
+        // Scheduler form can lose the hidden flag in some admin setups,
+        // so also detect by presence of scheduler fields.
+        $is_scheduler_form = isset($in['_is_scheduler_tab'])
+            || isset($in['schedule_minutes'])
+            || isset($in['max_posts_per_run'])
+            || isset($in['filter_post_age'])
+            || isset($in['filter_mode'])
+            || isset($in['filter_terms']);
+// --- 1. HANDLE SYSTEM FIELDS (CONNECTION FIX) ---
         // These fields are set programmatically by OAuth callbacks.
         // We MUST allow them to pass through or they get deleted.
         $system_fields = [
@@ -137,7 +142,7 @@ final class Admin {
         }
         // Share on Publish (appears on General + Scheduler tabs)
         if ($is_general_form || $is_scheduler_form) {
-            $s['share_on_publish'] = isset($in['share_on_publish']);
+            $s['share_on_publish'] = !empty($in['share_on_publish']);
         }
 
         // X Tab
@@ -314,17 +319,15 @@ final class Admin {
             echo '</div>';
         } elseif ($pages_transient) {
             echo '<div class="aiss-card"><h2>Select Facebook Page</h2>';
-            echo '<form method="post" action="' . admin_url('admin-post.php') . '">';
             wp_nonce_field('aiss_fb_select_page', 'aiss_fb_select_page_nonce');
-            echo '<input type="hidden" name="action" value="aiss_fb_select_page">';
             echo '<select class="aiss-select" name="page_id" style="margin-bottom:12px">';
             foreach ($pages_transient as $page) {
                 echo '<option value="' . esc_attr($page['id']) . '">' . esc_html($page['name']) . '</option>';
             }
             echo '</select>';
-            echo '<br><button type="submit" class="aiss-btn">Connect Page</button>';
-            echo '</form></div>';
-        } else {
+            echo '<br><button type="submit" class="aiss-btn" formaction="' . esc_url(admin_url('admin-post.php?action=aiss_fb_select_page')) . '" formmethod="post">Connect Page</button>';
+            echo '</div>';
+} else {
             echo '<div class="aiss-card">';
             echo '<h2>Connect Facebook Page</h2>';
             echo '<p>Click below to authenticate and select a Facebook page.</p>';
