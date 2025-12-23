@@ -173,7 +173,9 @@ CSS;
         $s['enable_web_search'] = isset($in['enable_web_search']);
         $s['enable_debug_logs'] = isset($in['enable_debug_logs']);
 
-        // Scheduler
+        // Scheduler - CRITICAL: Only update these if they're present in the form
+        $is_scheduler_form = isset($in['schedule_minutes']) || isset($in['max_posts_per_run']) || isset($in['filter_mode']);
+        
         if (isset($in['schedule_minutes'])) {
             $old_minutes = (int)$s['schedule_minutes'];
             $new_minutes = max(5, min(1440, (int)$in['schedule_minutes']));
@@ -188,12 +190,10 @@ CSS;
         if (isset($in['filter_mode'])) $s['filter_mode'] = sanitize_key($in['filter_mode']);
         if (isset($in['filter_terms'])) $s['filter_terms'] = sanitize_text_field($in['filter_terms']);
         
-        // Only update share_on_publish if we're saving from the scheduler tab
-        // (check if schedule_minutes is in the input, which means we're on scheduler tab)
-        if (isset($in['schedule_minutes'])) {
+        // CRITICAL FIX: Only update share_on_publish if this is the scheduler form
+        if ($is_scheduler_form) {
             $s['share_on_publish'] = isset($in['share_on_publish']);
         }
-        // Otherwise preserve the current value
 
         // Facebook
         if (isset($in['fb_app_id'])) $s['fb_app_id'] = sanitize_text_field($in['fb_app_id']);

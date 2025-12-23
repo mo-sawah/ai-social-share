@@ -160,7 +160,11 @@ final class OpenRouter {
         $text = $this->extract_response_text($json);
         
         if (empty($text)) {
-            return ['ok' => false, 'error' => 'AI returned empty response. Response: ' . substr($body, 0, 200)];
+            // Log the full response for debugging
+            $response_preview = is_array($json) ? json_encode($json) : $body;
+            $response_preview = substr($response_preview, 0, 500); // First 500 chars
+            
+            return ['ok' => false, 'error' => 'AI returned empty response. Check: (1) API key is valid, (2) Model exists, (3) Prompt is not too long. Response preview: ' . $response_preview];
         }
 
         return ['ok' => true, 'text' => $text];
