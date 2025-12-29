@@ -25,7 +25,7 @@ final class Metabox {
         $platform = isset($_GET['aiss_platform']) ? sanitize_key($_GET['aiss_platform']) : 'facebook';
         $settings = Utils::get_settings();
 
-        // Simple Tab Navigation
+        // 1. Simple Tab Navigation
         echo '<div style="border-bottom:1px solid #ddd; margin-bottom:12px; padding-bottom:8px; display:flex; gap:12px;">';
         $style_fb = ($platform === 'facebook') ? 'font-weight:bold; color:#000; text-decoration:none;' : 'color:#0073aa; text-decoration:none;';
         $style_x  = ($platform === 'x') ? 'font-weight:bold; color:#000; text-decoration:none;' : 'color:#0073aa; text-decoration:none;';
@@ -33,7 +33,7 @@ final class Metabox {
         echo '<a href="' . get_edit_post_link($post->ID) . '&aiss_platform=x#aiss_metabox" style="' . $style_x . '">X (Twitter)</a>';
         echo '</div>';
 
-        // Render Platform Logic
+        // 2. Render Platform Logic
         $connected = ($platform === 'facebook') ? $this->facebook->is_connected() : $this->x->is_connected();
         $prefix    = ($platform === 'facebook') ? '_aiss_fb_' : '_aiss_x_';
         
@@ -46,7 +46,7 @@ final class Metabox {
         $last_err  = get_post_meta($post->ID, $prefix . 'last_error', true);
         $last_gen  = get_post_meta($post->ID, $prefix . 'last_generated', true);
 
-        // Status Display
+        // 3. Status Display
         if ($shared_at) {
             echo '<p style="color:#00a32a; margin-top:0;"><strong>✓ Shared:</strong> ' . date_i18n('M j, Y g:i a', $shared_at) . '</p>';
         } else {
@@ -59,21 +59,59 @@ final class Metabox {
             echo '</div>';
         }
 
-        // Form
-        echo '<form action="' . admin_url('admin-post.php') . '" method="post">';
-        echo '<input type="hidden" name="action" value="aiss_manual_share">';
-        echo '<input type="hidden" name="post_id" value="' . $post->ID . '">';
-        echo '<input type="hidden" name="platform" value="' . esc_attr($platform) . '">';
-        wp_nonce_field('aiss_share_nonce', 'aiss_nonce');
+        // --- FIX STARTS HERE ---
+        // We do NOT output a <form> tag. We output a div and use JS to submit.
+        
+        $nonce = wp_create_nonce('aiss_share_nonce');
+        $admin_url = admin_url('admin-post.php');
 
+        echo '<div id="aiss-controls">';
+        
         echo '<label style="display:block; margin-bottom:4px; font-weight:600;">Message (Editable):</label>';
-        echo '<textarea name="message" style="width:100%; height:120px; margin-bottom:8px; font-family:monospace;" placeholder="Message will appear here...">' . esc_textarea($last_gen) . '</textarea>';
+        // Note: removed 'name' attribute so this doesn't conflict with main post save
+        echo '<textarea id="aiss_message_input" style="width:100%; height:120px; margin-bottom:8px; font-family:monospace;" placeholder="Message will appear here...">' . esc_textarea($last_gen) . '</textarea>';
 
         echo '<div style="display:flex; gap:8px;">';
-        echo '<button name="do_action" value="generate" class="button button-secondary">Regenerate AI</button>';
-        echo '<button name="do_action" value="share" class="button button-primary">Share Now</button>';
+        // Buttons are type="button" to prevent default submit
+        echo '<button type="button" class="button button-secondary" onclick="aiss_js_submit(\'generate\')">Regenerate AI</button>';
+        echo '<button type="button" class="button button-primary" onclick="aiss_js_submit(\'share\')">Share Now</button>';
         echo '</div>';
-        echo '</form>';
+        
+        echo '</div>'; 
+        ?>
+        
+        <script type="text/javascript">
+        function aiss_js_submit(actionType) {
+            // Create a temporary form outside the main post form to avoid nesting issues
+            var form = document.createElement("form");
+            form.method = "POST";
+            form.action = "<?php echo esc_url($admin_url); ?>";
+            
+            var params = {
+                'action': 'aiss_manual_share',
+                'post_id': '<?php echo $post->ID; ?>',
+                'platform': '<?php echo esc_js($platform); ?>',
+                'aiss_nonce': '<?php echo $nonce; ?>',
+                'do_action': actionType,
+                'message': document.getElementById('aiss_message_input').value
+            };
+
+            for (var key in params) {
+                if (params.hasOwnProperty(key)) {
+                    var hiddenField = document.createElement("input");
+                    hiddenField.setAttribute("type", "hidden");
+                    hiddenField.setAttribute("name", key);
+                    hiddenField.setAttribute("value", params[key]);
+                    form.appendChild(hiddenField);
+                }
+            }
+
+            document.body.appendChild(form);
+            form.submit();
+        }
+        </script>
+        <?php
+        // --- FIX ENDS HERE ---
     }
 
     public function handle_manual_share() {
