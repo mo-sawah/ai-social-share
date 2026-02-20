@@ -44,6 +44,17 @@ final class Utils {
             'x_access_secret'    => '',  // User Secret (saved after login)
             'x_username'         => '',  // Connected Account Name
             'prompt_x'           => "You are a news editor creating a post for X (Twitter).\n\nWrite a concise, newsworthy post:\n- Under 200 characters (leave room for URL)\n- Lead with the key fact\n- Professional and direct\n- Maximum 2 hashtags\n- Maximum 1 emoji\n- Do NOT include the article URL\n\nWrite in {language}. Return ONLY the tweet text.",
+
+            // --- Instagram ---
+            'ig_user_id'         => '',   // Instagram Business Account ID
+            'ig_username'        => '',   // @username for display
+            'ig_page_name'       => '',   // Linked Facebook Page name
+            'ig_page_token'      => '',   // Encrypted Page Access Token
+            'ig_connected_at'    => 0,
+            'ig_image_model'     => 'google/gemini-2.5-flash-image-preview', // Nano Banana
+            'ig_brand_colors'    => '',   // e.g. "dark blue and white" for image branding
+            'platform_gap_minutes' => 10, // Min minutes between platform shares
+            'prompt_instagram'   => ImageGenerator::default_instagram_prompt(),
         ];
 
         $saved = get_option('aiss_settings', []);

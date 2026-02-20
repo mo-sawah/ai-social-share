@@ -43,11 +43,20 @@ final class Plugin {
         require_once __DIR__ . '/class-aiss-simple-scheduler.php';
         require_once __DIR__ . '/class-aiss-metabox.php';
         require_once __DIR__ . '/class-aiss-admin.php';
+        require_once __DIR__ . '/class-aiss-instagram.php';
+        require_once __DIR__ . '/class-aiss-image-generator.php';
 
         // Initialize Service Classes
         $this->openrouter = new OpenRouter();
         $this->facebook   = new Facebook();
         $this->x          = new X();
+
+        $this->instagram       = new Instagram();
+        $this->image_generator = new ImageGenerator();
+        $this->scheduler       = new SimpleScheduler(
+            $this->openrouter, $this->facebook,
+            $this->x, $this->instagram, $this->image_generator
+        );
         
         // Initialize Logic Classes
         $this->scheduler  = new SimpleScheduler($this->openrouter, $this->facebook, $this->x);

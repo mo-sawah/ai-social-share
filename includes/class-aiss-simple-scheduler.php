@@ -4,478 +4,608 @@ namespace AISS;
 if (!defined('ABSPATH')) { exit; }
 
 /**
- * Simple Reliable Scheduler
- * 
- * Uses multiple approaches for maximum reliability:
- * 1. Share on Publish (instant)
- * 2. Admin heartbeat (runs when admin is active)
- * 3. Database-tracked queue (doesn't rely on WP-Cron)
+ * Simple Reliable Scheduler v2
+ *
+ * Staggered Platform Sharing — one platform per queue cycle, with a
+ * configurable minimum gap between platforms:
+ *
+ *   T+0  min → Facebook  (most overdue connected platform)
+ *   T+10 min → X         (gap elapsed)
+ *   T+20 min → Instagram (gap elapsed)
+ *   T+60 min → cycle repeats
+ *
+ * Multiple trigger methods for reliability:
+ *   1. Share on Publish  (instant)
+ *   2. Admin heartbeat   (every ~60s when admin is open)
+ *   3. Frontend check    (throttled, async, safety net)
+ *   4. WP-Cron          (backbone)
  */
 final class SimpleScheduler {
-    
+
     private $openrouter;
     private $facebook;
     private $x;
+    private $instagram;
+    private $image_generator;
 
-    public function __construct(OpenRouter $openrouter, Facebook $facebook, X $x) {
-        $this->openrouter = $openrouter;
-        $this->facebook = $facebook;
-        $this->x = $x;
+    public function __construct(
+        OpenRouter     $openrouter,
+        Facebook       $facebook,
+        X              $x,
+        Instagram      $instagram       = null,
+        ImageGenerator $image_generator = null
+    ) {
+        $this->openrouter      = $openrouter;
+        $this->facebook        = $facebook;
+        $this->x               = $x;
+        $this->instagram       = $instagram;
+        $this->image_generator = $image_generator;
 
         // Method 1: Share immediately on publish
         add_action('transition_post_status', [$this, 'share_on_publish'], 10, 3);
-        
-        // Method 2: Admin heartbeat check (every 60 seconds when admin is active)
+
+        // Method 2: Admin heartbeat (every ~60s when admin is active)
         add_action('admin_init', [$this, 'admin_heartbeat_check']);
-        
-        // Method 3: Frontend check (every page load, throttled)
+
+        // Method 3: Frontend page-load check (throttled to 5 min)
         add_action('init', [$this, 'frontend_check'], 1);
-        
-        // Method 4: Traditional WP-Cron as backup
+
+        // Method 4: Traditional WP-Cron as backbone
         add_action('aiss_simple_cron', [$this, 'process_queue']);
-        
-        // Register custom cron schedule
+
+        // Register dynamic cron schedule
         add_filter('cron_schedules', [$this, 'add_cron_schedule']);
-        
-        // Ensure cron is scheduled
+
+        // Auto-reschedule when settings change
+        add_action('update_option_aiss_settings', [$this, 'on_settings_change']);
+
+        // Ensure cron is registered on boot
         $this->ensure_scheduled();
     }
 
-    /**
-     * Add custom cron schedule - uses dynamic interval from settings
-     */
+    // ── Cron Schedule ──────────────────────────────────────────────────────
+
     public function add_cron_schedule($schedules) {
         $settings = Utils::get_settings();
         $minutes  = max(5, (int)$settings['schedule_minutes']);
-        $interval = $minutes * 60;
 
         $schedules['aiss_dynamic_interval'] = [
-            'interval' => $interval,
-            'display'  => "Every {$minutes} Minutes (AI Social Share)"
+            'interval' => $minutes * 60,
+            'display'  => "Every {$minutes} Minutes (AI Social Share)",
         ];
 
-        // Keep the old key around so any previously-registered event still
-        // has a valid schedule and can be unscheduled cleanly.
+        // Keep legacy key so any old events can still be unscheduled cleanly
         $schedules['aiss_every_30min'] = [
             'interval' => 1800,
-            'display'  => 'Every 30 Minutes (AI Social Share - legacy)'
+            'display'  => 'Every 30 Minutes (AI Social Share — legacy)',
         ];
 
         return $schedules;
     }
-    
-    /**
-     * Ensure cron is scheduled - always uses current settings interval
-     */
+
     public function ensure_scheduled($force = false) {
         if ($force) {
             $this->clear_scheduled();
         }
 
         if (!wp_next_scheduled('aiss_simple_cron')) {
-            // Re-read settings so we always use the latest saved value
             $settings = Utils::get_settings();
             $minutes  = max(5, (int)$settings['schedule_minutes']);
             wp_schedule_event(time() + 60, 'aiss_dynamic_interval', 'aiss_simple_cron');
             self::log("Cron scheduled successfully (every {$minutes} minutes)");
         }
     }
-    
-    /**
-     * Clear scheduled events
-     */
+
     public function clear_scheduled() {
         $timestamp = wp_next_scheduled('aiss_simple_cron');
-        if ($timestamp) {
+        while ($timestamp) {
             wp_unschedule_event($timestamp, 'aiss_simple_cron');
-            self::log('Cron unscheduled');
+            $timestamp = wp_next_scheduled('aiss_simple_cron');
         }
+        self::log('Cron unscheduled');
     }
 
-    /**
-     * Method 1: Share on publish (INSTANT)
-     */
+    public function on_settings_change() {
+        // Force reschedule so the new interval takes effect immediately
+        $this->clear_scheduled();
+        $this->ensure_scheduled();
+    }
+
+    // ── Trigger: Share on Publish ──────────────────────────────────────────
+
     public function share_on_publish($new_status, $old_status, $post) {
-        // Only trigger on new publications
-        if ($new_status !== 'publish' || $old_status === 'publish') {
-            return;
-        }
-        
-        // Only for posts
-        if ($post->post_type !== 'post') {
-            return;
-        }
-        
+        if ($new_status !== 'publish' || $old_status === 'publish') return;
+        if ($post->post_type !== 'post') return;
+
         $settings = Utils::get_settings();
-        
-        // Check if share on publish is enabled
-        if (empty($settings['share_on_publish'])) {
-            return;
-        }
-        
-        self::log("Share on publish: Processing post #{$post->ID}");
-        
-        // Process immediately (with slight delay to allow post meta to save)
+        if (empty($settings['share_on_publish'])) return;
+
+        self::log("Share on publish triggered for post #{$post->ID}");
+
+        // Schedule a slightly-delayed single event as safety net
         wp_schedule_single_event(time() + 10, 'aiss_process_single_post', [$post->ID]);
-        
-        // Also try to run it right away in case cron fails
+
+        // Also attempt to run right away
         $this->process_single_post($post->ID);
     }
 
-    /**
-     * Method 2: Admin heartbeat (runs when admin is active)
-     */
+    // ── Trigger: Admin Heartbeat ───────────────────────────────────────────
+
     public function admin_heartbeat_check() {
-        // Only run once per minute
+        // Throttle to once per minute
         $last_check = (int)get_transient('aiss_admin_heartbeat');
-        if ($last_check && time() - $last_check < 60) {
-            return;
-        }
-        
+        if ($last_check && time() - $last_check < 60) return;
+
         set_transient('aiss_admin_heartbeat', time(), 120);
-        
-        // Check if queue needs processing
-        $last_run = (int)get_option('aiss_last_run_time', 0);
-        $settings = Utils::get_settings();
-        $interval = max(5, (int)$settings['schedule_minutes']) * 60;
-        
-        // If it's been longer than the interval, process queue
-        if (time() - $last_run >= $interval) {
-            self::log("Admin heartbeat: Triggering queue processing");
+
+        if ($this->is_any_platform_due()) {
+            self::log("Admin heartbeat: platform due, triggering queue");
             $this->process_queue();
         }
     }
 
-    /**
-     * Method 3: Frontend check (throttled heavily)
-     */
+    // ── Trigger: Frontend Check ────────────────────────────────────────────
+
     public function frontend_check() {
-        // Only run once every 5 minutes max
-        $last_check = (int)get_transient('aiss_frontend_check');
-        if ($last_check) {
-            return;
-        }
-        
-        set_transient('aiss_frontend_check', time(), 300); // 5 minutes
-        
-        // Check if queue needs processing
-        $last_run = (int)get_option('aiss_last_run_time', 0);
+        // Throttle to once every 5 minutes
+        if (get_transient('aiss_frontend_check')) return;
+        set_transient('aiss_frontend_check', time(), 300);
+
         $settings = Utils::get_settings();
         $interval = max(5, (int)$settings['schedule_minutes']) * 60;
-        
-        // If it's been way longer than the interval (2x), process queue
-        if (time() - $last_run >= ($interval * 2)) {
-            self::log("Frontend check: Triggering overdue queue processing");
-            // Spawn async request to not slow down page load
-            $this->spawn_async_process();
+        $state    = $this->get_platform_state();
+
+        // Only trigger if something is overdue by 2× the interval (safety net only)
+        foreach (['fb', 'x', 'ig'] as $p) {
+            if ((time() - ($state[$p]['last_run'] ?? 0)) >= $interval * 2) {
+                self::log("Frontend check: {$p} overdue — spawning async process");
+                $this->spawn_async_process();
+                break;
+            }
         }
     }
 
-    /**
-     * Spawn async process (doesn't block page load)
-     */
+    // ── Async Process ──────────────────────────────────────────────────────
+
     private function spawn_async_process() {
-        $url = admin_url('admin-ajax.php?action=aiss_async_process');
-        
-        wp_remote_post($url, [
-            'timeout' => 0.01,
-            'blocking' => false,
+        wp_remote_post(admin_url('admin-ajax.php?action=aiss_async_process'), [
+            'timeout'   => 0.01,
+            'blocking'  => false,
             'sslverify' => false,
-            'body' => ['security' => wp_create_nonce('aiss_async')],
+            'body'      => ['security' => wp_create_nonce('aiss_async')],
         ]);
     }
 
-    /**
-     * Handle async process
-     */
     public static function handle_async_process() {
-        // Verify nonce
         if (!isset($_POST['security']) || !wp_verify_nonce($_POST['security'], 'aiss_async')) {
             wp_die('Invalid request');
         }
-        
-        // Run queue processing
+
         $instance = new self(
             new OpenRouter(),
             new Facebook(),
-            new X()
+            new X(),
+            class_exists('AISS\Instagram')      ? new Instagram()      : null,
+            class_exists('AISS\ImageGenerator') ? new ImageGenerator() : null
         );
         $instance->process_queue();
-        
-        wp_die(); // Required for AJAX
+
+        wp_die();
     }
 
-    /**
-     * Process single post (for share on publish)
-     */
+    // ── Core: Process Single Post (Share on Publish) ───────────────────────
+
     public function process_single_post($post_id) {
         $settings = Utils::get_settings();
-        
-        self::log("Processing single post #{$post_id}");
-        
-        $result = $this->process_post($post_id, $settings);
-        
-        self::log("Single post result: Shared={$result['shared']}, Skipped={$result['skipped']}, Errors={$result['errors']}");
+        self::log("Processing single post #{$post_id} across all connected platforms");
+
+        // For share-on-publish we share to ALL platforms immediately
+        // (user explicitly hit Publish, so no stagger needed)
+        $platforms = [
+            'fb' => [$this->facebook, 'run_facebook'],
+            'x'  => [$this->x,        'run_x'],
+            'ig' => [$this->instagram, 'run_instagram'],
+        ];
+
+        $prev_ran = false;
+        foreach ($platforms as $key => [$obj, $method]) {
+            if (!$obj || !$obj->is_connected()) continue;
+            if ($prev_ran) sleep(5); // small gap even on publish to avoid rate-limits
+            $result = $this->$method($post_id, $settings);
+            self::log("Single post [{$key}]: Shared={$result['shared']}, Errors={$result['errors']}");
+            $prev_ran = true;
+        }
     }
 
-    /**
-     * Main queue processing
-     */
+    // ── Core: Queue Processing (Staggered) ────────────────────────────────
+
     public function process_queue() {
         // Prevent concurrent runs
-        $lock = get_transient('aiss_processing_lock');
-        if ($lock) {
-            self::log("Queue processing already running - skipping");
+        if (get_transient('aiss_processing_lock')) {
+            self::log("Queue already running — skipping");
             return;
         }
-        
-        set_transient('aiss_processing_lock', time(), 300); // 5-minute lock
-        
+        set_transient('aiss_processing_lock', time(), 300);
+
         $start_time = microtime(true);
-        $run_id = uniqid('run_');
-        
+        $run_id     = uniqid('run_');
         self::log("=== QUEUE PROCESS START [{$run_id}] ===");
-        
+
         try {
-            // Update last run time
-            update_option('aiss_last_run_time', time(), false);
-            
             $settings = Utils::get_settings();
+            $interval = max(5, (int)$settings['schedule_minutes']) * 60;
+            $min_gap  = max(1, (int)($settings['platform_gap_minutes'] ?? 10)) * 60;
+            $state    = $this->get_platform_state();
+            $now      = time();
+
+            // Check which networks are connected
             $fb_connected = $this->facebook->is_connected();
             $x_connected  = $this->x->is_connected();
+            $ig_connected = $this->instagram && $this->instagram->is_connected();
 
-            if (!$fb_connected && !$x_connected) {
-                self::log('No networks connected - skipping');
+            if (!$fb_connected && !$x_connected && !$ig_connected) {
+                self::log('No networks connected — skipping');
                 return;
             }
 
-            self::log("Networks: FB=" . ($fb_connected ? 'YES' : 'NO') . ", X=" . ($x_connected ? 'YES' : 'NO'));
+            self::log("Networks: FB=" . ($fb_connected ? 'YES' : 'NO') .
+                      " X=" . ($x_connected ? 'YES' : 'NO') .
+                      " IG=" . ($ig_connected ? 'YES' : 'NO'));
 
-            // Build query with improved date filter
+            // Pick the ONE platform that is due and has waited longest
+            $target = $this->pick_next_platform($state, $interval, $min_gap, $now);
+
+            if ($target === null) {
+                self::log("No platform due or minimum gap not met — nothing to do");
+                return;
+            }
+
+            self::log("Target platform: [{$target}] | interval={$interval}s | gap={$min_gap}s");
+
+            // Find posts not yet shared to this specific platform
             $args = [
                 'post_type'      => 'post',
                 'post_status'    => 'publish',
-                'posts_per_page' => (int)$settings['max_posts_per_run'],
+                'posts_per_page' => max(1, (int)$settings['max_posts_per_run']),
                 'fields'         => 'ids',
                 'orderby'        => 'date',
                 'order'          => 'DESC',
+                'meta_query'     => [
+                    [
+                        'key'     => "_aiss_{$target}_shared_at",
+                        'compare' => 'NOT EXISTS',
+                    ],
+                ],
             ];
 
-            // FIX 5: Apply post age filter
-            $post_age = $settings['filter_post_age'] ?? '7d';
+            // Post age filter
+            $post_age   = $settings['filter_post_age'] ?? '24h';
             $date_query = $this->get_date_query_for_age($post_age);
             if ($date_query) {
                 $args['date_query'] = [$date_query];
             }
 
-            // Apply category/tag filters
+            // Category / tag filter
             if ($settings['filter_mode'] !== 'all' && !empty($settings['filter_terms'])) {
-                $tax = $settings['filter_mode'] === 'category' ? 'category' : 'post_tag';
-                $slugs = explode(',', $settings['filter_terms']);
-                $args['tax_query'] = [
-                    [
-                        'taxonomy' => $tax,
-                        'field'    => 'slug',
-                        'terms'    => array_map('trim', $slugs)
-                    ]
-                ];
+                $tax             = $settings['filter_mode'] === 'category' ? 'category' : 'post_tag';
+                $args['tax_query'] = [[
+                    'taxonomy' => $tax,
+                    'field'    => 'slug',
+                    'terms'    => array_map('trim', explode(',', $settings['filter_terms'])),
+                ]];
             }
 
-            $posts = get_posts($args);
+            $posts       = get_posts($args);
             $total_posts = count($posts);
-            
-            self::log("Found {$total_posts} posts to process (Age filter: {$post_age})");
+            self::log("Found {$total_posts} unshared posts for [{$target}] (age filter: {$post_age})");
+
+            // Always advance rotation (so the next platform gets its turn)
+            // even when there are no posts to share
+            $this->update_platform_last_run($target, $now);
+            update_option('aiss_last_run_time', $now, false);
 
             if ($total_posts === 0) {
+                self::log("[{$target}] No eligible posts — advancing rotation");
                 return;
             }
 
             $processed = 0;
-            $shared = 0;
-            $skipped = 0;
-            $errors = 0;
+            $shared    = 0;
+            $skipped   = 0;
+            $errors    = 0;
 
             foreach ($posts as $post_id) {
+                // Timeout protection — don't run for more than 45 seconds
                 if ((microtime(true) - $start_time) > 45) {
-                    self::log('Timeout protection - stopping', 'warning');
+                    self::log('Timeout protection triggered — stopping batch', 'warning');
                     break;
                 }
-                
-                $result = $this->process_post($post_id, $settings);
+
+                $result = $this->dispatch($post_id, $target, $settings);
                 $processed++;
-                $shared += $result['shared'];
+                $shared  += $result['shared'];
                 $skipped += $result['skipped'];
-                $errors += $result['errors'];
+                $errors  += $result['errors'];
             }
 
             $duration = round(microtime(true) - $start_time, 2);
-            
-            // Update stats
-            $stats = [
-                'last_run' => time(),
-                'duration' => $duration,
+
+            update_option('aiss_last_run_stats', [
+                'last_run'  => $now,
+                'duration'  => $duration,
+                'platform'  => $target,
                 'processed' => $processed,
-                'shared' => $shared,
-                'skipped' => $skipped,
-                'errors' => $errors
-            ];
-            update_option('aiss_last_run_stats', $stats, false);
-            
-            self::log("=== QUEUE PROCESS COMPLETE [{$run_id}] ===");
+                'shared'    => $shared,
+                'skipped'   => $skipped,
+                'errors'    => $errors,
+            ], false);
+
+            self::log("=== QUEUE COMPLETE [{$run_id}] [{$target}] ===");
             self::log("Duration: {$duration}s | Processed: {$processed} | Shared: {$shared} | Skipped: {$skipped} | Errors: {$errors}");
-            
+
         } catch (\Exception $e) {
             self::log('FATAL ERROR: ' . $e->getMessage(), 'error');
+            self::log('Stack trace: ' . $e->getTraceAsString(), 'error');
         } finally {
             delete_transient('aiss_processing_lock');
         }
     }
-    
+
+    // ── Platform Selection Logic ───────────────────────────────────────────
+
     /**
-     * Get date query based on age filter
+     * Pick the ONE platform that should run next.
+     *
+     * Rules:
+     *  1. At least $min_gap seconds must have elapsed since ANY platform last ran.
+     *  2. Platform must be connected.
+     *  3. At least $interval seconds must have elapsed since THIS platform last ran.
+     *  4. Among eligible platforms, pick the most overdue one.
      */
+    private function pick_next_platform(array $state, int $interval, int $min_gap, int $now) : ?string {
+        // Enforce minimum gap since the most-recent platform run
+        $last_any_ran = 0;
+        foreach (['fb', 'x', 'ig'] as $p) {
+            $last_any_ran = max($last_any_ran, $state[$p]['last_run'] ?? 0);
+        }
+
+        if ($last_any_ran > 0 && ($now - $last_any_ran) < $min_gap) {
+            $waited = $now - $last_any_ran;
+            self::log("Platform gap not met: {$waited}s elapsed, need {$min_gap}s");
+            return null;
+        }
+
+        $platform_objects = [
+            'fb' => $this->facebook,
+            'x'  => $this->x,
+            'ig' => $this->instagram,
+        ];
+
+        $best        = null;
+        $max_overdue = 0;
+
+        foreach (['fb', 'x', 'ig'] as $p) {
+            $obj = $platform_objects[$p] ?? null;
+            if (!$obj || !$obj->is_connected()) continue;
+
+            $overdue = $now - ($state[$p]['last_run'] ?? 0);
+
+            if ($overdue >= $interval && $overdue > $max_overdue) {
+                $max_overdue = $overdue;
+                $best        = $p;
+            }
+        }
+
+        return $best;
+    }
+
+    private function is_any_platform_due() : bool {
+        $settings = Utils::get_settings();
+        $interval = max(5, (int)$settings['schedule_minutes']) * 60;
+        $min_gap  = max(1, (int)($settings['platform_gap_minutes'] ?? 10)) * 60;
+
+        return $this->pick_next_platform(
+            $this->get_platform_state(),
+            $interval,
+            $min_gap,
+            time()
+        ) !== null;
+    }
+
+    // ── Per-Platform Dispatch ──────────────────────────────────────────────
+
+    private function dispatch(int $post_id, string $platform, array $settings) : array {
+        self::log("  [{$platform}] Processing post #{$post_id}: " . get_the_title($post_id));
+
+        switch ($platform) {
+            case 'fb': return $this->run_facebook($post_id, $settings);
+            case 'x':  return $this->run_x($post_id, $settings);
+            case 'ig': return $this->run_instagram($post_id, $settings);
+        }
+
+        return ['shared' => 0, 'skipped' => 0, 'errors' => 0];
+    }
+
+    private function run_facebook(int $post_id, array $settings) : array {
+        if (get_post_meta($post_id, '_aiss_fb_shared_at', true)) {
+            self::log("  [fb] Already shared — skipping");
+            return ['shared' => 0, 'skipped' => 1, 'errors' => 0];
+        }
+
+        $gen = $this->openrouter->generate_post($post_id, $settings['prompt_facebook']);
+
+        if (!$gen['ok']) {
+            update_post_meta($post_id, '_aiss_fb_last_error', $gen['error']);
+            self::log("  [fb] ✗ AI generation failed: {$gen['error']}", 'error');
+            return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+        }
+
+        self::log("  [fb] AI generated (" . strlen($gen['text']) . " chars)");
+        $res = $this->facebook->share_link_post($post_id, $gen['text']);
+
+        if ($res['ok']) {
+            update_post_meta($post_id, '_aiss_fb_shared_at',      time());
+            update_post_meta($post_id, '_aiss_fb_remote_id',      $res['id']);
+            update_post_meta($post_id, '_aiss_fb_last_generated', $gen['text']);
+            delete_post_meta($post_id, '_aiss_fb_last_error');
+            self::log("  [fb] ✓ Shared successfully (ID: {$res['id']})");
+            return ['shared' => 1, 'skipped' => 0, 'errors' => 0];
+        }
+
+        update_post_meta($post_id, '_aiss_fb_last_error', $res['error']);
+        self::log("  [fb] ✗ Share failed: {$res['error']}", 'error');
+        return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+    }
+
+    private function run_x(int $post_id, array $settings) : array {
+        if (get_post_meta($post_id, '_aiss_x_shared_at', true)) {
+            self::log("  [x] Already shared — skipping");
+            return ['shared' => 0, 'skipped' => 1, 'errors' => 0];
+        }
+
+        $gen = $this->openrouter->generate_post($post_id, $settings['prompt_x']);
+
+        if (!$gen['ok']) {
+            update_post_meta($post_id, '_aiss_x_last_error', $gen['error']);
+            self::log("  [x] ✗ AI generation failed: {$gen['error']}", 'error');
+            return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+        }
+
+        self::log("  [x] AI generated (" . strlen($gen['text']) . " chars)");
+        $res = $this->x->post_tweet($post_id, $gen['text']);
+
+        if ($res['ok']) {
+            update_post_meta($post_id, '_aiss_x_shared_at',      time());
+            update_post_meta($post_id, '_aiss_x_remote_id',      $res['id']);
+            update_post_meta($post_id, '_aiss_x_last_generated', $gen['text']);
+            delete_post_meta($post_id, '_aiss_x_last_error');
+            self::log("  [x] ✓ Shared successfully (ID: {$res['id']})");
+            return ['shared' => 1, 'skipped' => 0, 'errors' => 0];
+        }
+
+        update_post_meta($post_id, '_aiss_x_last_error', $res['error']);
+        self::log("  [x] ✗ Share failed: {$res['error']}", 'error');
+        return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+    }
+
+    private function run_instagram(int $post_id, array $settings) : array {
+        if (!$this->instagram || !$this->image_generator) {
+            self::log("  [ig] Instagram classes not loaded", 'error');
+            return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+        }
+
+        if (get_post_meta($post_id, '_aiss_ig_shared_at', true)) {
+            self::log("  [ig] Already shared — skipping");
+            return ['shared' => 0, 'skipped' => 1, 'errors' => 0];
+        }
+
+        // Generate image + caption via Gemini Nano Banana
+        $gen = $this->image_generator->generate_for_instagram($post_id);
+
+        if (!$gen['ok']) {
+            update_post_meta($post_id, '_aiss_ig_last_error', $gen['error']);
+            self::log("  [ig] ✗ Image generation failed: {$gen['error']}", 'error');
+            return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+        }
+
+        self::log("  [ig] Image generated, posting to Instagram...");
+        $res = $this->instagram->post_image(
+            $post_id,
+            $gen['image_url'],
+            $gen['caption'],
+            $gen['attachment_id']
+        );
+
+        if ($res['ok']) {
+            update_post_meta($post_id, '_aiss_ig_shared_at',      time());
+            update_post_meta($post_id, '_aiss_ig_remote_id',      $res['id']);
+            update_post_meta($post_id, '_aiss_ig_last_generated', $gen['caption']);
+            update_post_meta($post_id, '_aiss_ig_attachment_id',  $gen['attachment_id']);
+            update_post_meta($post_id, '_aiss_ig_image_url',      $gen['image_url']);
+            delete_post_meta($post_id, '_aiss_ig_last_error');
+            self::log("  [ig] ✓ Shared successfully (Media ID: {$res['id']})");
+            return ['shared' => 1, 'skipped' => 0, 'errors' => 0];
+        }
+
+        update_post_meta($post_id, '_aiss_ig_last_error', $res['error']);
+        self::log("  [ig] ✗ Share failed: {$res['error']}", 'error');
+        return ['shared' => 0, 'skipped' => 0, 'errors' => 1];
+    }
+
+    // ── Platform State Storage ─────────────────────────────────────────────
+
+    private function get_platform_state() : array {
+        $stored   = get_option('aiss_platform_state', []);
+        $defaults = [
+            'fb' => ['last_run' => 0],
+            'x'  => ['last_run' => 0],
+            'ig' => ['last_run' => 0],
+        ];
+        return array_merge($defaults, is_array($stored) ? $stored : []);
+    }
+
+    private function update_platform_last_run(string $platform, int $timestamp) : void {
+        $state                      = $this->get_platform_state();
+        $state[$platform]['last_run'] = $timestamp;
+        update_option('aiss_platform_state', $state, false);
+    }
+
+    // ── Date Query Helper ──────────────────────────────────────────────────
+
     private function get_date_query_for_age($age) {
         switch ($age) {
-            case '24h':
-                return ['after' => '24 hours ago'];
-            case '48h':
-                return ['after' => '48 hours ago'];
-            case '7d':
-                return ['after' => '7 days ago'];
-            case '30d':
-                return ['after' => '30 days ago'];
+            case '24h':  return ['after' => '24 hours ago'];
+            case '48h':  return ['after' => '48 hours ago'];
+            case '7d':   return ['after' => '7 days ago'];
+            case '30d':  return ['after' => '30 days ago'];
             case 'all':
-            default:
-                return null;
+            default:     return null;
         }
     }
 
-    /**
-     * Process a single post
-     */
-    private function process_post($post_id, $settings) {
-        $result = ['shared' => 0, 'skipped' => 0, 'errors' => 0];
-        
-        self::log("Processing post #{$post_id}: " . get_the_title($post_id));
-        
-        // Facebook
-        if ($this->facebook->is_connected()) {
-            $fb_done = get_post_meta($post_id, '_aiss_fb_shared_at', true);
-            
-            if ($fb_done) {
-                $result['skipped']++;
-            } else {
-                $gen = $this->openrouter->generate_post($post_id, $settings['prompt_facebook']);
-                
-                if ($gen['ok']) {
-                    $res = $this->facebook->share_link_post($post_id, $gen['text']);
-                    
-                    if ($res['ok']) {
-                        update_post_meta($post_id, '_aiss_fb_shared_at', time());
-                        update_post_meta($post_id, '_aiss_fb_remote_id', $res['id']);
-                        update_post_meta($post_id, '_aiss_fb_last_generated', $gen['text']);
-                        delete_post_meta($post_id, '_aiss_fb_last_error');
-                        self::log("  FB: ✓ Shared (ID: {$res['id']})");
-                        $result['shared']++;
-                    } else {
-                        update_post_meta($post_id, '_aiss_fb_last_error', $res['error']);
-                        self::log("  FB: ✗ Failed: {$res['error']}", 'error');
-                        $result['errors']++;
-                    }
-                } else {
-                    update_post_meta($post_id, '_aiss_fb_last_error', $gen['error']);
-                    self::log("  FB: ✗ AI failed: {$gen['error']}", 'error');
-                    $result['errors']++;
-                }
-            }
-        }
+    // ── Status ────────────────────────────────────────────────────────────
 
-        // Delay between platforms
-        if ($this->facebook->is_connected() && $this->x->is_connected()) {
-            sleep(15);
-        }
-
-        // X (Twitter)
-        if ($this->x->is_connected()) {
-            $x_done = get_post_meta($post_id, '_aiss_x_shared_at', true);
-            
-            if ($x_done) {
-                $result['skipped']++;
-            } else {
-                $gen = $this->openrouter->generate_post($post_id, $settings['prompt_x']);
-                
-                if ($gen['ok']) {
-                    $res = $this->x->post_tweet($post_id, $gen['text']);
-                    
-                    if ($res['ok']) {
-                        update_post_meta($post_id, '_aiss_x_shared_at', time());
-                        update_post_meta($post_id, '_aiss_x_remote_id', $res['id']);
-                        update_post_meta($post_id, '_aiss_x_last_generated', $gen['text']);
-                        delete_post_meta($post_id, '_aiss_x_last_error');
-                        self::log("  X: ✓ Shared (ID: {$res['id']})");
-                        $result['shared']++;
-                    } else {
-                        update_post_meta($post_id, '_aiss_x_last_error', $res['error']);
-                        self::log("  X: ✗ Failed: {$res['error']}", 'error');
-                        $result['errors']++;
-                    }
-                } else {
-                    update_post_meta($post_id, '_aiss_x_last_error', $gen['error']);
-                    self::log("  X: ✗ AI failed: {$gen['error']}", 'error');
-                    $result['errors']++;
-                }
-            }
-        }
-        
-        return $result;
-    }
-
-    /**
-     * Get status
-     */
     public static function get_status() : array {
-        $last_run = (int)get_option('aiss_last_run_time', 0);
-        $next_cron = wp_next_scheduled('aiss_simple_cron');
-        
+        $last_run   = (int)get_option('aiss_last_run_time', 0);
+        $next_cron  = wp_next_scheduled('aiss_simple_cron');
+        $plat_state = get_option('aiss_platform_state', []);
+
         return [
-            'active' => ($next_cron !== false || $last_run > (time() - 3600)),
-            'next_run' => $next_cron,
-            'last_run' => $last_run,
-            'methods' => [
+            'active'         => ($next_cron !== false || $last_run > (time() - 7200)),
+            'next_run'       => $next_cron,
+            'last_run'       => $last_run,
+            'platform_state' => $plat_state,
+            'methods'        => [
                 'share_on_publish' => Utils::get_settings()['share_on_publish'] ?? false,
-                'admin_heartbeat' => true,
-                'wp_cron' => ($next_cron !== false),
-            ]
+                'admin_heartbeat'  => true,
+                'wp_cron'          => ($next_cron !== false),
+            ],
         ];
     }
 
-    /**
-     * Logging
-     */
+    // ── Logging ───────────────────────────────────────────────────────────
+
     public static function log($message, $level = 'info') : void {
         $settings = Utils::get_settings();
-        
+
         if (empty($settings['enable_debug_logs']) && $level !== 'error') {
             return;
         }
-        
+
         $timestamp = current_time('mysql');
-        $entry = "[{$timestamp}] [{$level}] {$message}\n";
-        
-        $log = get_option('aiss_debug_log', '');
+        $entry     = "[{$timestamp}] [{$level}] {$message}\n";
+
+        $log   = get_option('aiss_debug_log', '');
         $lines = explode("\n", $log);
         $lines[] = $entry;
-        $lines = array_slice($lines, -100);
+        $lines = array_slice($lines, -150); // Keep last 150 lines
         update_option('aiss_debug_log', implode("\n", $lines), false);
-        
+
         if ($level === 'error' && defined('WP_DEBUG') && WP_DEBUG) {
             error_log("AI Social Share: {$message}");
         }
     }
 
-    /**
-     * Clear logs
-     */
     public static function clear_log() : void {
         delete_option('aiss_debug_log');
         self::log('Debug log cleared');
