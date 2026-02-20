@@ -42,27 +42,42 @@ final class SimpleScheduler {
     }
 
     /**
-     * Add custom cron schedule
+     * Add custom cron schedule - uses dynamic interval from settings
      */
     public function add_cron_schedule($schedules) {
+        $settings = Utils::get_settings();
+        $minutes  = max(5, (int)$settings['schedule_minutes']);
+        $interval = $minutes * 60;
+
+        $schedules['aiss_dynamic_interval'] = [
+            'interval' => $interval,
+            'display'  => "Every {$minutes} Minutes (AI Social Share)"
+        ];
+
+        // Keep the old key around so any previously-registered event still
+        // has a valid schedule and can be unscheduled cleanly.
         $schedules['aiss_every_30min'] = [
             'interval' => 1800,
-            'display' => 'Every 30 Minutes (AI Social Share)'
+            'display'  => 'Every 30 Minutes (AI Social Share - legacy)'
         ];
+
         return $schedules;
     }
     
     /**
-     * Ensure cron is scheduled
+     * Ensure cron is scheduled - always uses current settings interval
      */
     public function ensure_scheduled($force = false) {
         if ($force) {
             $this->clear_scheduled();
         }
-        
+
         if (!wp_next_scheduled('aiss_simple_cron')) {
-            wp_schedule_event(time() + 60, 'aiss_every_30min', 'aiss_simple_cron');
-            self::log('Cron scheduled successfully');
+            // Re-read settings so we always use the latest saved value
+            $settings = Utils::get_settings();
+            $minutes  = max(5, (int)$settings['schedule_minutes']);
+            wp_schedule_event(time() + 60, 'aiss_dynamic_interval', 'aiss_simple_cron');
+            self::log("Cron scheduled successfully (every {$minutes} minutes)");
         }
     }
     
