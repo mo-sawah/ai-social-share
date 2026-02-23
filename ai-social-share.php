@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Social Share
  * Description: Automatically generates and shares WordPress posts to social media using OpenRouter AI (Facebook first).
- * Version: 2.0.23
+ * Version: 2.0.24
  * Author: Sawah Solutions
  * License: GPLv2 or later
  * Text Domain: ai-social-share

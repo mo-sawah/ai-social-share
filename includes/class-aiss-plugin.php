@@ -24,6 +24,12 @@ final class Plugin {
     /** @var X */
     public $x;
 
+    /** @var Instagram */
+    public $instagram;
+
+    /** @var ImageGenerator */
+    public $image_generator;
+
     public static function instance() : self {
         if (self::$instance === null) {
             self::$instance = new self();
@@ -57,11 +63,10 @@ final class Plugin {
             $this->openrouter, $this->facebook,
             $this->x, $this->instagram, $this->image_generator
         );
-        
+
         // Initialize Logic Classes
-        $this->scheduler  = new SimpleScheduler($this->openrouter, $this->facebook, $this->x);
-        $this->metabox    = new Metabox($this->openrouter, $this->facebook, $this->x);
-        $this->admin      = new Admin($this->scheduler, $this->facebook, $this->x);
+        $this->metabox = new Metabox($this->openrouter, $this->facebook, $this->x);
+        $this->admin   = new Admin($this->scheduler, $this->facebook, $this->x, $this->instagram);
 
         // Register Hooks
         register_activation_hook(AISS_PLUGIN_FILE, [__CLASS__, 'activate']);
